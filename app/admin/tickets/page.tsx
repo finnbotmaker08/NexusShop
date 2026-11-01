@@ -1,0 +1,32 @@
+import Link from "next/link";
+import { redirect } from "next/navigation";
+import { ArrowLeft, Headphones } from "lucide-react";
+import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient } from "@/lib/supabase/admin";
+import { isVerifiedAdmin } from "@/lib/admin";
+import { replyToResellerTicketAdmin, updateResellerTicket } from "@/app/admin/ticket-actions";
+
+export const metadata = { title: "Reseller support tickets" };
+export const dynamic = "force-dynamic";
+const input = "mt-2 w-full rounded-xl border border-white/10 bg-black/30 px-3.5 py-3 text-sm text-white outline-none focus:border-violet-300/40";
+
+export default async function AdminTicketsPage({ searchParams }: PageProps<"/admin/tickets">) {
+  const session = await createSupabaseServerClient();
+  const { data: { user } } = await session.auth.getUser();
+  if (!isVerifiedAdmin(user)) redirect("/login");
+  const params = await searchParams;
+  const admin = createSupabaseAdminClient();
+  const [{ data: tickets, error }, selectedResult] = await Promise.all([
+    admin.from("reseller_tickets").select("id,reseller_id,subject,status,priority,assigned_admin,created_at,updated_at").order("updated_at", { ascending: false }).limit(200),
+    params.ticket ? admin.from("reseller_tickets").select("id,reseller_id,subject,status,priority,assigned_admin,created_at,updated_at").eq("id", params.ticket).maybeSingle() : Promise.resolve({ data: null }),
+  ]);
+  const selected = selectedResult.data;
+  const [profileResult, messagesResult] = selected ? await Promise.all([
+    admin.from("reseller_profiles").select("email,discord_id,membership").eq("user_id", selected.reseller_id).maybeSingle(),
+    admin.from("reseller_ticket_messages").select("id,author_id,body,is_internal,created_at").eq("ticket_id", selected.id).order("created_at", { ascending: true }),
+  ]) : [{ data: null }, { data: [] }];
+  return <main className="reseller-page min-h-screen bg-[#070707] px-5 py-8 text-white sm:px-8"><div className="mx-auto max-w-6xl"><Link href="/admin" className="inline-flex items-center gap-2 text-xs text-white/45 hover:text-white"><ArrowLeft className="h-4 w-4"/> Admin workspace</Link><div className="mt-8 flex items-center gap-3"><Headphones className="h-6 w-6 text-violet-200"/><div><p className="text-[10px] font-bold uppercase tracking-[0.23em] text-violet-200/55">Control center</p><h1 className="mt-1 text-3xl font-semibold">Support tickets</h1></div></div>{params.error ? <p role="alert" className="mt-4 text-sm text-rose-200">Ticket action failed. Verify the fields and current status.</p> : null}{params.notice ? <p role="status" className="mt-4 text-sm text-emerald-200">Ticket updated.</p> : null}
+    <div className="mt-6 grid gap-5 lg:grid-cols-[340px_1fr]"><section className="rounded-3xl border border-white/[0.08] bg-[#0c0c0c] p-4"><h2 className="px-2 font-semibold">All tickets</h2>{error ? <p className="mt-4 text-sm text-amber-100/70">Apply the reseller migration first.</p> : tickets?.length ? <div className="mt-3 space-y-1">{tickets.map((ticket) => <Link key={ticket.id} href={`/admin/tickets?ticket=${ticket.id}`} className={`block rounded-xl p-3 ${params.ticket === ticket.id ? "bg-violet-400/10" : "hover:bg-white/[0.035]"}`}><p className="truncate text-sm">{ticket.subject}</p><p className="mt-1 truncate text-[10px] text-white/40">{ticket.reseller_id}</p><p className="mt-1 text-[10px] uppercase text-violet-100/55">{ticket.status.replaceAll("_", " ")} · {ticket.priority}</p></Link>)}</div> : <p className="p-3 text-sm text-white/40">No tickets.</p>}</section>
+    <section className="min-h-[32rem] rounded-3xl border border-white/[0.08] bg-[#0c0c0c] p-5 sm:p-7">{selected ? <><div className="border-b border-white/[0.07] pb-4"><p className="text-[10px] uppercase tracking-wider text-white/35">{profileResult.data?.email} · Discord {profileResult.data?.discord_id} · {profileResult.data?.membership}</p><h2 className="mt-2 text-xl font-semibold">{selected.subject}</h2><p className="mt-1 text-xs text-white/40">Opened {new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(selected.created_at))}</p></div><form action={updateResellerTicket} className="mt-4 grid gap-3 sm:grid-cols-[1fr_1fr_auto]"><input type="hidden" name="ticket_id" value={selected.id}/><label className="text-[10px] text-white/45">Status<select name="status" defaultValue={selected.status} className={input}>{[["open","Open"],["in_progress","In Progress"],["waiting_customer","Waiting for Customer"],["resolved","Resolved"],["closed","Closed"]].map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label><label className="text-[10px] text-white/45">Priority<select name="priority" defaultValue={selected.priority} className={input}>{["low","normal","high","urgent"].map((value)=><option key={value} value={value}>{value}</option>)}</select></label><button className="self-end rounded-xl border border-white/10 px-4 py-3 text-xs hover:bg-white/[0.05]">Save</button></form><div className="mt-5 max-h-[28rem] space-y-3 overflow-y-auto">{messagesResult.data?.map((message) => <article key={message.id} className={`rounded-2xl border p-4 ${message.is_internal ? "border-amber-300/15 bg-amber-300/[0.04]" : "border-white/[0.07] bg-black/15"}`}><p className="whitespace-pre-wrap text-sm leading-6 text-white/75">{message.body}</p><p className="mt-2 text-[10px] text-white/35">{message.is_internal ? "Internal note" : message.author_id === (user?.id ?? "") ? "You" : "Reseller"} · {new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(message.created_at))}</p></article>)}</div><form action={replyToResellerTicketAdmin} className="mt-5 border-t border-white/[0.07] pt-4"><input type="hidden" name="ticket_id" value={selected.id}/><label className="block text-xs text-white/55">Reply or internal note<textarea className={input} name="body" rows={3} maxLength={8000} required/></label><label className="mt-3 inline-flex items-center gap-2 text-xs text-amber-100/65"><input type="checkbox" name="is_internal"/> Internal note visible to staff only</label><button className="mt-3 block rounded-xl bg-violet-500 px-4 py-2.5 text-xs font-semibold hover:bg-violet-400">Send message</button></form></> : <div className="flex min-h-[28rem] items-center justify-center text-sm text-white/40">Select a ticket to review.</div>}</section></div>
+  </div></main>;
+}

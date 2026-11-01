@@ -1,0 +1,386 @@
+@import "tailwindcss";
+
+:root {
+  --background: #060912;
+  --foreground: #f7f9ff;
+  --surface: #0b1120;
+  --surface-raised: #101a2b;
+  --accent: #438cff;
+  --muted: #929db1;
+  --line: rgba(167, 193, 255, 0.11);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  scroll-behavior: smooth;
+  background: var(--background);
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(ellipse at 50% -18rem, rgba(25, 91, 230, 0.15), transparent 43rem),
+    radial-gradient(ellipse at 100% 48rem, rgba(14, 59, 148, 0.08), transparent 35rem),
+    var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: rgba(67, 140, 255, 0.4);
+  color: #fff;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #070a12;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 3px solid #070a12;
+  border-radius: 999px;
+  background: #24324a;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #438cff;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid rgba(115, 172, 255, 0.95);
+  outline-offset: 3px;
+}
+
+.store-page {
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(36, 101, 223, 0.09), transparent 42rem),
+    radial-gradient(ellipse at 100% 38%, rgba(21, 68, 158, 0.055), transparent 34rem),
+    linear-gradient(180deg, rgba(7, 11, 20, 0.22), transparent 28rem);
+}
+
+.store-panel {
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(145deg, rgba(18, 29, 49, 0.94), rgba(9, 14, 25, 0.96));
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+
+.store-input {
+  width: 100%;
+  border: 1px solid rgba(167, 193, 255, 0.11);
+  border-radius: 0.8rem;
+  background: rgba(4, 8, 16, 0.72);
+  padding: 0.65rem 0.8rem;
+  color: var(--foreground);
+  font-size: 0.875rem;
+  transition:
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.store-input:hover {
+  border-color: rgba(167, 193, 255, 0.2);
+}
+
+.store-input:focus {
+  border-color: rgba(96, 165, 250, 0.55);
+  background: rgba(7, 13, 25, 0.96);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+  outline: none;
+}
+
+.store-input::placeholder {
+  color: rgba(255, 255, 255, 0.28);
+}
+
+.store-nav-link {
+  position: relative;
+}
+
+.store-nav-link::after {
+  position: absolute;
+  right: 1rem;
+  bottom: 0.25rem;
+  left: 1rem;
+  height: 1px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, #78adff, transparent);
+  content: "";
+  opacity: 0;
+  transform: scaleX(0.45);
+  transition:
+    opacity 180ms ease,
+    transform 220ms ease;
+}
+
+.store-nav-link:hover::after,
+.store-nav-link-active::after {
+  opacity: 0.8;
+  transform: scaleX(1);
+}
+
+.store-card {
+  isolation: isolate;
+}
+
+.store-card::after {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  background: linear-gradient(
+    112deg,
+    transparent 24%,
+    rgba(180, 213, 255, 0.055) 43%,
+    rgba(180, 213, 255, 0.13) 49%,
+    rgba(180, 213, 255, 0.055) 55%,
+    transparent 74%
+  );
+  content: "";
+  pointer-events: none;
+  transform: translateX(-125%);
+  transition: transform 750ms cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.store-card:hover::after {
+  transform: translateX(125%);
+}
+
+.store-gradient-text {
+  background-size: 200% 100%;
+  animation: store-gradient-flow 8s ease-in-out infinite alternate;
+}
+
+.store-interactive {
+  transition:
+    transform 180ms cubic-bezier(0.2, 0.7, 0.2, 1),
+    border-color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease,
+    color 180ms ease;
+}
+
+.store-interactive:active {
+  transform: scale(0.98);
+}
+
+.store-available-dot {
+  box-shadow: 0 0 10px rgba(110, 231, 183, 0.48);
+  animation: store-status-glow 2.8s ease-in-out infinite;
+}
+
+.store-float {
+  animation: store-float 7s ease-in-out infinite;
+}
+
+.store-glow-drift {
+  animation: store-glow-drift 12s ease-in-out infinite alternate;
+}
+
+@keyframes store-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-7px);
+  }
+}
+
+@keyframes store-glow-drift {
+  from {
+    opacity: 0.48;
+    transform: translate3d(-2%, 1%, 0) scale(0.96);
+  }
+  to {
+    opacity: 0.85;
+    transform: translate3d(2%, -1%, 0) scale(1.04);
+  }
+}
+
+@keyframes store-gradient-flow {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes store-status-glow {
+  0%,
+  100% {
+    opacity: 0.72;
+    box-shadow: 0 0 5px rgba(110, 231, 183, 0.28);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 12px rgba(110, 231, 183, 0.64);
+  }
+}
+
+.store-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: #9dc4ff;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.store-eyebrow::before {
+  width: 1.35rem;
+  height: 1px;
+  background: linear-gradient(90deg, #3985ff, rgba(57, 133, 255, 0.18));
+  content: "";
+}
+
+@keyframes store-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.store-enter {
+  animation: store-rise 500ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.reseller-page {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(ellipse at 50% -15rem, rgba(125, 65, 220, 0.18), transparent 44rem),
+    radial-gradient(ellipse at 100% 35rem, rgba(91, 48, 154, 0.1), transparent 34rem),
+    linear-gradient(180deg, #08070d 0%, #07070a 55%, #09070d 100%);
+}
+
+.reseller-page::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 auto;
+  height: 32rem;
+  background: radial-gradient(ellipse at 50% 0%, rgba(167, 110, 255, 0.075), transparent 65%);
+  content: "";
+  pointer-events: none;
+}
+
+.reseller-page article {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025), 0 14px 36px rgba(0, 0, 0, 0.13);
+  transition: transform 180ms ease, border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+}
+
+.reseller-page article:hover {
+  transform: translateY(-2px);
+  border-color: rgba(192, 132, 252, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035), 0 18px 42px rgba(0, 0, 0, 0.24), 0 0 28px rgba(124, 58, 237, 0.055);
+}
+
+.reseller-page button:not(:disabled) {
+  transition: transform 150ms ease, border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+
+.reseller-page button:not(:disabled):active {
+  transform: scale(0.985);
+}
+
+.reseller-page input,
+.reseller-page select,
+.reseller-page textarea {
+  transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+}
+
+.reseller-page input:focus,
+.reseller-page select:focus,
+.reseller-page textarea:focus {
+  border-color: rgba(192, 132, 252, 0.52);
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.1);
+  outline: none;
+}
+
+.reseller-enter {
+  animation: store-rise 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .store-enter {
+    animation: none;
+  }
+
+  .reseller-enter {
+    animation: none;
+  }
+
+  .store-float,
+  .store-glow-drift,
+  .store-gradient-text,
+  .store-available-dot {
+    animation: none;
+  }
+
+  .store-card::after,
+  .store-nav-link::after {
+    transition: none;
+  }
+
+  .reseller-page article,
+  .reseller-page button:not(:disabled) {
+    transition: none;
+  }
+}
