@@ -427,19 +427,19 @@ export default async function AdminPage({
             </div>
           </section>
 
-             {false ? (
-            <div
-              role="alert"
-              className="flex gap-3 rounded-2xl border border-amber-200/15 bg-amber-100/[0.05] p-4 text-sm text-amber-100/80"
-            >
-              <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-              Management tables are not installed yet. Apply
-              <code className="rounded bg-black/30 px-1.5 py-0.5 text-xs">
-                supabase/migrations/20261006000000_store_management.sql
-              </code>
-              in your Supabase SQL Editor.
-            </div>
-          ) : null}
+            {migrationMissing ? (
+  <div
+    role="alert"
+    className="flex gap-3 rounded-2xl border border-amber-200/15 bg-amber-100/[0.05] p-4 text-sm text-amber-100/80"
+  >
+    <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+    Management tables are not installed yet. Apply
+    <code className="rounded bg-black/30 px-1.5 py-0.5 text-xs">
+      supabase/migrations/20261006000000_store_management.sql
+    </code>
+    in your Supabase SQL Editor.
+  </div>
+) : null}
 
           <Notice value={query.notice} kind="notice" />
           <Notice value={query.error} kind="error" />
