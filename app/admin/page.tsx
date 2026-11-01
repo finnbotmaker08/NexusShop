@@ -427,7 +427,7 @@ export default async function AdminPage({
             </div>
           </section>
 
-            {migrationMissing ? (
+        {false ? (
   <div
     role="alert"
     className="flex gap-3 rounded-2xl border border-amber-200/15 bg-amber-100/[0.05] p-4 text-sm text-amber-100/80"
