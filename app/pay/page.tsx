@@ -39,7 +39,6 @@ export default async function PaddlePaymentLinkPage({
           <PaddlePaymentInitializer
             clientToken={clientToken}
             environment={environment}
-            transactionId={transactionId}
           />
         ) : (
           <p role="alert" className="mt-4 text-sm leading-6 text-white/50">

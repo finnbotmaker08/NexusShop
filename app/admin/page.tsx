@@ -9,7 +9,9 @@ import {
   Check,
   CircleAlert,
   ClipboardList,
+  ExternalLink,
   Gift,
+  Globe2,
   KeyRound,
   Layers3,
   LifeBuoy,
@@ -22,6 +24,7 @@ import {
   ShieldCheck,
   Store,
   Wallet,
+  Wrench,
 } from "lucide-react";
 import { SiteFooter } from "@/components/site-footer";
 import {
@@ -35,8 +38,8 @@ import {
   retryPaidOrderFulfillment,
   saveCategory,
   saveDiscordWebhook,
-  savePaymentSettings,
   saveProduct,
+  savePaymentSettings,
   saveStoreSettings,
   testDiscordWebhook,
 } from "@/app/admin/actions";
@@ -83,7 +86,17 @@ function Notice({
 
   const message =
     kind === "error"
-      ? decodeURIComponent(value)
+      ? value === "manual-delivery"
+        ? "Manual delivery could not be saved. Confirm the order is processing and enter delivery details."
+        : value === "payments"
+          ? "Payment settings could not be saved. Check the addresses, URLs, and reminder fields."
+          : value === "payment"
+            ? "The payment action could not be completed. It may no longer be awaiting review."
+            : value === "product-has-stock"
+              ? "Remove this product's inventory before deleting it."
+              : value === "product-in-orders"
+                ? "This product is part of an order and cannot be deleted. Deactivate it instead."
+                : `Supabase Error / Failed: ${value}`
       : messages[value] || value;
 
   if (!message) return null;
@@ -130,26 +143,55 @@ export default async function AdminPage({
     { data: categories, error: categoriesError },
     { data: keys, error: keysError },
     { data: orders, error: ordersError },
+    { data: settings, error: settingsError },
+    { data: webhook, error: webhookError },
+    { data: paymentSettingsData, error: paymentSettingsError },
     { data: payments, error: paymentsError },
-    { data: paymentSettings },
-    { data: settings },
-    { data: discordSettings },
   ] = await Promise.all([
-    supabase.from("products").select("*").order("created_at", { ascending: false }),
-    supabase.from("store_categories").select("*").order("sort_order", { ascending: true }),
-    supabase.from("product_keys").select("id, product_id, key_value, created_at, assigned_order_id").order("created_at", { ascending: false }),
-    supabase.from("store_orders").select("*").order("created_at", { ascending: false }).limit(20),
-    supabase.from("store_payments").select("*").order("created_at", { ascending: false }).limit(20),
-    supabase.from("store_payment_settings").select("*").eq("id", "default").maybeSingle(),
-    supabase.from("store_settings").select("*").eq("id", "default").maybeSingle(),
-    supabase.from("discord_webhook_settings").select("*").eq("id", "default").maybeSingle(),
+    supabase.from("products").select("*").order("created_at", {
+      ascending: false,
+    }),
+    supabase
+      .from("store_categories")
+      .select("*")
+      .order("sort_order", { ascending: true }),
+    supabase
+      .from("product_keys")
+      .select("id, product_id, key_value, created_at, assigned_order_id")
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("store_orders")
+      .select(
+      "id, order_number, status, payment_method, customer_email, currency, total_amount_minor, items, manual_delivery, created_at",
+      )
+      .order("created_at", { ascending: false })
+      .limit(50),
+    supabase
+      .from("store_settings")
+      .select("*")
+      .eq("id", "default")
+      .maybeSingle(),
+    supabase
+      .from("discord_webhook_settings")
+      .select("id")
+      .eq("id", "default")
+      .maybeSingle(),
+    supabase
+      .from("store_payment_settings")
+      .select("*")
+      .eq("id", "default")
+      .maybeSingle(),
+    supabase
+      .from("store_payments")
+      .select("id, order_id, provider, status, transaction_id, expected_amount, received_amount, confirmations, detected_at, expires_at")
+      .order("created_at", { ascending: false })
+      .limit(50),
   ]);
 
   const productList = products ?? [];
   const categoryList = categories ?? [];
   const keyList = keys ?? [];
   const orderList = orders ?? [];
-  const paymentList = payments ?? [];
   const storeSettings = settings ?? {
     maintenance_mode: false,
     maintenance_message: "We will be back shortly.",
@@ -157,7 +199,36 @@ export default async function AdminPage({
     discord_support_url: "",
     support_email: "",
   };
-
+  const paymentSettings = paymentSettingsData ?? {
+    bitcoin_enabled: false,
+    bitcoin_address: "",
+    bitcoin_confirmations: 2,
+    litecoin_enabled: false,
+    litecoin_address: "",
+    litecoin_confirmations: 6,
+    tikkie_enabled: false,
+    tikkie_url: "",
+    tikkie_instructions: "",
+    payment_timeout_minutes: 60,
+    tikkie_reset_date: "",
+    tikkie_reminder_date: "",
+    tikkie_reminder_email: "",
+    tikkie_reminder_enabled: false,
+  };
+  const paymentList = payments ?? [];
+  const dataErrors = [
+    productsError,
+    categoriesError,
+    keysError,
+    ordersError,
+    settingsError,
+    webhookError,
+    paymentSettingsError,
+    paymentsError,
+  ].filter(Boolean);
+  const migrationMissing = dataErrors.some(
+    (item) => item?.code === "PGRST205" || item?.code === "42P01",
+  );
   const formattedDate = new Intl.DateTimeFormat("en-US", {
     weekday: "long",
     month: "long",
@@ -275,6 +346,16 @@ export default async function AdminPage({
               Rewards
             </Link>
           </nav>
+          <div className="mt-8 hidden rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4 lg:block">
+            <ShieldCheck className="h-4 w-4 text-white/45" />
+            <p className="mt-3 text-xs font-semibold text-white/75">
+              Private workspace
+            </p>
+            <p className="mt-1 text-[11px] leading-5 text-white/35">
+              Store settings and inventory are restricted to verified Nexus Suppliers
+              administrators.
+            </p>
+          </div>
         </aside>
 
         <div className="min-w-0 space-y-8">
@@ -288,6 +369,10 @@ export default async function AdminPage({
                   <h1 className="mt-4 text-4xl font-semibold tracking-[-0.05em] sm:text-5xl">
                     Good to see you.
                   </h1>
+                  <p className="mt-3 text-sm text-white/45">
+                    Your catalog, community, and store controls in one quiet
+                    corner.
+                  </p>
                 </div>
                 <div
                   className={`inline-flex w-fit items-center gap-2 rounded-full border px-3.5 py-2 text-xs ${
@@ -345,7 +430,12 @@ export default async function AdminPage({
           <Notice value={query.notice} kind="notice" />
           <Notice value={query.error} kind="error" />
 
-          {/* Products Section */}
+          {productsError && !migrationMissing ? (
+            <div role="alert" className="rounded-2xl border border-red-300/15 bg-red-300/[0.05] p-4 text-sm text-red-100/80">
+              Could not load catalog: {productsError.message}
+            </div>
+          ) : null}
+
           <section id="products" className="scroll-mt-24 space-y-4">
             <div className="flex items-end justify-between gap-3">
               <div>
@@ -367,6 +457,9 @@ export default async function AdminPage({
 
             <div id="new-product" className={`${panelClass} scroll-mt-24 p-5 sm:p-6`}>
               <h3 className="font-semibold">Create a product</h3>
+              <p className="mt-1 text-xs text-white/40">
+                Listings are saved directly to your existing Supabase catalog.
+              </p>
               <form action={saveProduct} className="mt-5 grid gap-4 sm:grid-cols-2">
                 <label className={labelClass}>
                   Product name
@@ -444,6 +537,7 @@ export default async function AdminPage({
               <div className={`${panelClass} px-6 py-12 text-center`}>
                 <PackageOpen className="mx-auto h-7 w-7 text-white/40" />
                 <p className="mt-3 font-medium">Your catalog is waiting.</p>
+                <p className="mt-1 text-xs text-white/40">Create your first product above.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -465,10 +559,13 @@ export default async function AdminPage({
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-semibold">{product.name}</p>
-                        <p className="text-xs text-white/45">
-                          {product.category || "Uncategorized"} · /products/{product.slug} · {product.is_active ? "Published" : "Draft"}
-                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="truncate text-sm font-semibold">{product.name}</p>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] ${product.is_active ? "bg-emerald-300/[0.08] text-emerald-100/70" : "bg-white/[0.05] text-white/35"}`}>
+                            {product.is_active ? "Published" : "Draft"}
+                          </span>
+                        </div>
+                        <p className="mt-1 truncate text-xs text-white/40">{product.category ?? "Uncategorized"} · /products/{product.slug}</p>
                       </div>
                       <span className="hidden text-sm font-semibold sm:block">{formatPrice(getEffectiveProductPrice(product))}</span>
                       <ArrowDownRight className="h-4 w-4 shrink-0 text-white/35 transition group-open:rotate-180" />
@@ -483,23 +580,15 @@ export default async function AdminPage({
                           <input className={inputClass} name="slug" defaultValue={product.slug ?? ""} maxLength={160} required />
                         </label>
                         <label className={labelClass}>Price (EUR)
-                          <input className={inputClass} name="price" type="number" min="0" step="0.01" defaultValue={product.price ?? 0} required />
+                          <input className={inputClass} name="price" type="number" min="0" step="0.01" defaultValue={product.price ?? ""} required />
                         </label>
-                        <label className={labelClass}>Sale price (EUR)
+                        <label className={labelClass}>Sale price (optional, EUR)
                           <input className={inputClass} name="sale_price" type="number" min="0" step="0.01" defaultValue={product.sale_price ?? ""} />
                         </label>
                         <label className={labelClass}>Paddle price ID
-                          <input className={inputClass} name="paddle_price_id" defaultValue={product.paddle_price_id ?? ""} maxLength={40} />
+                          <input className={inputClass} name="paddle_price_id" defaultValue={product.paddle_price_id ?? ""} maxLength={40} placeholder="pri_..." />
                         </label>
-                        <label className={labelClass}>Category
-                          <select className={inputClass} name="category" defaultValue={product.category ?? ""}>
-                            <option value="">Choose a category</option>
-                            {categoryList.map((category) => (
-                              <option key={category.id} value={category.name}>{category.name}</option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className={labelClass}>Available stock
+                        <label className={labelClass}>Available stock (blank = not capped)
                           <input className={inputClass} name="stock" type="number" min="0" step="1" defaultValue={product.stock ?? ""} />
                         </label>
                         <label className={labelClass}>Delivery type
@@ -509,13 +598,24 @@ export default async function AdminPage({
                             <option value="link">Access link</option>
                           </select>
                         </label>
+                        <label className={labelClass}>Category
+                          <select className={inputClass} name="category" defaultValue={product.category ?? ""}>
+                            <option value="">Uncategorized</option>
+                            {categoryList.map((category) => (
+                              <option key={category.id} value={category.name}>{category.name}</option>
+                            ))}
+                            {product.category && !categoryList.some((category) => category.name === product.category) ? (
+                              <option value={product.category}>{product.category} (existing)</option>
+                            ) : null}
+                          </select>
+                        </label>
                         <label className={`${labelClass} sm:col-span-2`}>Short description
                           <textarea className={inputClass} name="short_description" defaultValue={product.short_description ?? ""} maxLength={300} rows={2} />
                         </label>
                         <label className={`${labelClass} sm:col-span-2`}>Full description
                           <textarea className={inputClass} name="description" defaultValue={product.description ?? ""} maxLength={4000} rows={4} required />
                         </label>
-                        <label className={labelClass}>Product image URL
+                        <label className={labelClass}>Image URL
                           <input className={inputClass} name="image_url" type="url" defaultValue={product.image_url ?? ""} />
                         </label>
                         <label className={labelClass}>Destination / access URL
@@ -525,8 +625,8 @@ export default async function AdminPage({
                           <textarea className={inputClass} name="delivery_description" defaultValue={product.delivery_description ?? ""} maxLength={4000} rows={3} />
                         </label>
                         <label className="flex items-center gap-2 text-xs text-white/55 sm:col-span-2">
-                          <input type="checkbox" name="is_active" defaultChecked={product.is_active ?? true} className="h-4 w-4 accent-white" />
-                          Publish this product immediately
+                          <input type="checkbox" name="is_active" defaultChecked={product.is_active ?? false} className="h-4 w-4 accent-white" />
+                          Published in the storefront
                         </label>
                         <button type="submit" className="rounded-xl bg-white px-4 py-3 text-sm font-bold text-black transition hover:bg-white/90 sm:col-span-2">
                           Save product changes
@@ -535,7 +635,7 @@ export default async function AdminPage({
                       <form action={deleteProduct} className="mt-3">
                         <input type="hidden" name="id" value={product.id} />
                         <button type="submit" className="w-full rounded-xl border border-red-200/15 px-4 py-2.5 text-xs font-semibold text-red-100/70 transition hover:border-red-200/30 hover:bg-red-200/[0.04] hover:text-red-100">
-                          Delete product
+                          Delete product (only if it has no inventory or order history)
                         </button>
                       </form>
                     </div>
@@ -545,7 +645,6 @@ export default async function AdminPage({
             )}
           </section>
 
-          {/* Categories Section */}
           <section id="categories" className="scroll-mt-24 space-y-4">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">Organize</p>
@@ -567,221 +666,8 @@ export default async function AdminPage({
                   <Plus className="h-4 w-4" /> Add
                 </button>
               </form>
-              {categoryList.length > 0 && (
-                <div className="mt-6 space-y-2 border-t border-white/[0.07] pt-4">
-                  {categoryList.map((cat) => (
-                    <div key={cat.id} className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-black/20 p-3 text-xs">
-                      <div>
-                        <span className="font-semibold">{cat.name}</span>
-                        <span className="ml-2 text-white/40">/{cat.slug}</span>
-                      </div>
-                      <span className="text-white/40">{cat.description || "No description"}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           </section>
-
-          {/* Key Inventory Section */}
-          <section id="keys" className="scroll-mt-24 space-y-4">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">Inventory</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Key inventory</h2>
-            </div>
-            <div className={`${panelClass} p-5 sm:p-6`}>
-              <form action={addProductKeys} className="space-y-4">
-                <label className={labelClass}>Product
-                  <select className={inputClass} name="product_id" required defaultValue="">
-                    <option value="">Select product for keys</option>
-                    {productList.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className={labelClass}>Product keys (one per line)
-                  <textarea className={inputClass} name="keys" rows={4} required placeholder="KEY-XXXX-1234&#10;KEY-YYYY-5678" />
-                </label>
-                <button type="submit" className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-xs font-bold text-black transition hover:bg-white/90">
-                  <Plus className="h-4 w-4" /> Add keys
-                </button>
-              </form>
-              <div className="mt-6 border-t border-white/[0.07] pt-4">
-                <p className="text-xs font-semibold text-white/60 mb-3">Stored keys ({keyList.length})</p>
-                {keyList.length === 0 ? (
-                  <p className="text-xs text-white/35">No product keys available.</p>
-                ) : (
-                  <div className="max-h-60 overflow-y-auto space-y-1.5 pr-2">
-                    {keyList.map((k) => (
-                      <div key={k.id} className="flex items-center justify-between rounded-lg border border-white/[0.05] bg-black/30 px-3 py-2 text-xs font-mono">
-                        <span className="truncate">{k.key_value}</span>
-                        <div className="flex items-center gap-3">
-                          <span className={k.assigned_order_id ? "text-amber-400/70" : "text-emerald-400/70"}>
-                            {k.assigned_order_id ? "Assigned" : "Available"}
-                          </span>
-                          {!k.assigned_order_id && (
-                            <form action={deleteProductKey}>
-                              <input type="hidden" name="id" value={k.id} />
-                              <button type="submit" className="text-red-400 hover:text-red-300">Delete</button>
-                            </form>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </section>
-
-          {/* Orders Section */}
-          <section id="orders" className="scroll-mt-24 space-y-4">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">Sales</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Orders &amp; Fulfillment</h2>
-            </div>
-            <div className={`${panelClass} p-5 sm:p-6`}>
-              {orderList.length === 0 ? (
-                <p className="text-xs text-white/40">No orders received yet.</p>
-              ) : (
-                <div className="space-y-3">
-                  {orderList.map((o) => (
-                    <div key={o.id} className="rounded-xl border border-white/[0.07] bg-black/20 p-4 text-xs space-y-2">
-                      <div className="flex justify-between font-semibold">
-                        <span>Order #{o.order_number}</span>
-                        <span>{formatPrice(o.total_amount)} ({o.status})</span>
-                      </div>
-                      <p className="text-white/50">Customer: {o.customer_email}</p>
-                      {o.delivery_type === "manual" && o.status !== "completed" && (
-                        <form action={completeManualStoreOrder} className="mt-2 space-y-2">
-                          <input type="hidden" name="order_id" value={o.id} />
-                          <textarea className={inputClass} name="delivery_content" rows={2} required placeholder="Enter manual delivery details / links..." />
-                          <button type="submit" className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-black">Complete delivery</button>
-                        </form>
-                      )}
-                      {o.status === "paid" && o.delivery_type === "stock" && (
-                        <form action={retryPaidOrderFulfillment}>
-                          <input type="hidden" name="order_id" value={o.id} />
-                          <button type="submit" className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20">Retry key assignment</button>
-                        </form>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
-
-          {/* Payments Section */}
-          <section id="payments" className="scroll-mt-24 space-y-4">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">Billing</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Payments</h2>
-            </div>
-            <div className={`${panelClass} p-5 sm:p-6 space-y-6`}>
-              <div>
-                <h3 className="font-semibold text-sm mb-3">Pending Customer Payments</h3>
-                {paymentList.length === 0 ? (
-                  <p className="text-xs text-white/40">No pending payments.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {paymentList.map((p) => (
-                      <div key={p.id} className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-black/30 p-3 text-xs">
-                        <div>
-                          <p className="font-semibold">{p.payment_method?.toUpperCase()} - {formatPrice(p.amount)}</p>
-                          <p className="text-white/40">Status: {p.status}</p>
-                        </div>
-                        {p.status === "pending" && (
-                          <div className="flex gap-2">
-                            <form action={approveStorePayment}>
-                              <input type="hidden" name="payment_id" value={p.id} />
-                              <button type="submit" className="rounded-lg bg-emerald-500/20 px-3 py-1.5 text-emerald-300 hover:bg-emerald-500/30 font-semibold">Approve</button>
-                            </form>
-                            <form action={rejectStorePayment}>
-                              <input type="hidden" name="payment_id" value={p.id} />
-                              <input type="hidden" name="reason" value="Payment not received" />
-                              <button type="submit" className="rounded-lg bg-red-500/20 px-3 py-1.5 text-red-300 hover:bg-red-500/30 font-semibold">Reject</button>
-                            </form>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="border-t border-white/[0.07] pt-4">
-                <h3 className="font-semibold text-sm mb-3">Payment Settings</h3>
-                <form action={savePaymentSettings} className="grid gap-4 sm:grid-cols-2">
-                  <label className="flex items-center gap-2 text-xs text-white/70 sm:col-span-2">
-                    <input type="checkbox" name="tikkie_enabled" defaultChecked={paymentSettings?.tikkie_enabled ?? true} className="h-4 w-4 accent-white" />
-                    Enable Tikkie Payment Method
-                  </label>
-                  <label className={`${labelClass} sm:col-span-2`}>Tikkie URL
-                    <input className={inputClass} name="tikkie_url" defaultValue={paymentSettings?.tikkie_url ?? ""} placeholder="https://tikkie.me/pay/..." />
-                  </label>
-                  <label className={`${labelClass} sm:col-span-2`}>Tikkie Payment Instructions
-                    <textarea className={inputClass} name="tikkie_instructions" defaultValue={paymentSettings?.tikkie_instructions ?? ""} rows={2} />
-                  </label>
-                  <button type="submit" className="rounded-xl bg-white px-4 py-2.5 text-xs font-bold text-black sm:col-span-2">Save Payment Settings</button>
-                </form>
-              </div>
-            </div>
-          </section>
-
-          {/* Settings Section */}
-          <section id="settings" className="scroll-mt-24 space-y-4">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">Configuration</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Store settings</h2>
-            </div>
-            <div className={`${panelClass} p-5 sm:p-6`}>
-              <form action={saveStoreSettings} className="space-y-4">
-                <label className="flex items-center gap-2 text-xs text-white/70">
-                  <input type="checkbox" name="maintenance_mode" defaultChecked={storeSettings.maintenance_mode} className="h-4 w-4 accent-white" />
-                  Enable Maintenance Mode
-                </label>
-                <label className={labelClass}>Maintenance Message
-                  <input className={inputClass} name="maintenance_message" defaultValue={storeSettings.maintenance_message} />
-                </label>
-                <label className={labelClass}>Support Email
-                  <input className={inputClass} name="support_email" defaultValue={storeSettings.support_email} type="email" />
-                </label>
-                <label className={labelClass}>Discord Server URL
-                  <input className={inputClass} name="discord_server_url" defaultValue={storeSettings.discord_server_url} />
-                </label>
-                <label className={labelClass}>Discord Support URL
-                  <input className={inputClass} name="discord_support_url" defaultValue={storeSettings.discord_support_url} />
-                </label>
-                <button type="submit" className="rounded-xl bg-white px-4 py-3 text-xs font-bold text-black">Save Store Settings</button>
-              </form>
-            </div>
-          </section>
-
-          {/* Discord Webhook Section */}
-          <section id="discord" className="scroll-mt-24 space-y-4">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">Integrations</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Discord webhook</h2>
-            </div>
-            <div className={`${panelClass} p-5 sm:p-6 space-y-4`}>
-              <form action={saveDiscordWebhook} className="space-y-3">
-                <label className={labelClass}>Webhook URL
-                  <input className={inputClass} name="webhook_url" defaultValue={discordSettings?.webhook_url ?? ""} placeholder="https://discord.com/api/webhooks/..." required />
-                </label>
-                <button type="submit" className="rounded-xl bg-white px-4 py-2.5 text-xs font-bold text-black">Save Webhook</button>
-              </form>
-              <div className="flex gap-3 border-t border-white/[0.07] pt-4">
-                <form action={testDiscordWebhook}>
-                  <button type="submit" className="rounded-xl border border-white/10 px-4 py-2 text-xs hover:bg-white/5">Test Connection</button>
-                </form>
-                <form action={clearDiscordWebhook}>
-                  <button type="submit" className="rounded-xl border border-red-500/20 text-red-300 px-4 py-2 text-xs hover:bg-red-500/10">Clear Webhook</button>
-                </form>
-              </div>
-            </div>
-          </section>
-
         </div>
       </div>
       <SiteFooter />

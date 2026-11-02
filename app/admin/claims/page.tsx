@@ -9,27 +9,185 @@ import { changeResellerClaimStatus, findResellerClaim } from "@/app/admin/claim-
 export const metadata = { title: "Reward claims" };
 export const dynamic = "force-dynamic";
 
-export default async function AdminClaimsPage({ searchParams }: PageProps<"/admin/claims">) {
+export default async function AdminClaimsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ id?: string; error?: string; notice?: string }>;
+}) {
   const session = await createSupabaseServerClient();
   const { data: { user } } = await session.auth.getUser();
   if (!isVerifiedAdmin(user)) redirect("/login");
+
   const params = await searchParams;
   const admin = createSupabaseAdminClient();
+
   const [{ data: claims, error }, selectedResult] = await Promise.all([
-    admin.from("reseller_claims").select("id, reseller_id, reward_id, status, rejection_reason, created_at, updated_at, delivered_at").order("created_at", { ascending: false }).limit(100),
-    params.id ? admin.from("reseller_claims").select("id, reseller_id, reward_id, status, rejection_reason, created_at, updated_at, delivered_at").eq("id", params.id).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    admin
+      .from("reseller_claims")
+      .select("id, reseller_id, reward_id, status, rejection_reason, created_at, updated_at, delivered_at")
+      .order("created_at", { ascending: false })
+      .limit(100),
+    params.id
+      ? admin
+          .from("reseller_claims")
+          .select("id, reseller_id, reward_id, status, rejection_reason, created_at, updated_at, delivered_at")
+          .eq("id", params.id)
+          .maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
   ]);
+
   const selected = selectedResult.data;
-  const [ownerResult, rewardResult] = selected ? await Promise.all([
-    admin.from("reseller_profiles").select("email, discord_id, membership").eq("user_id", selected.reseller_id).maybeSingle(),
-    admin.from("reseller_rewards").select("title, reward_type, instructions").eq("id", selected.reward_id).maybeSingle(),
-  ]) : [{ data: null }, { data: null }];
-  const errorText = params.error === "notfound" ? "No claim matches that key." : params.error ? "The claim could not be processed. Check its status and try again." : null;
-  return <main className="reseller-page min-h-screen bg-[#070707] px-5 py-8 text-white sm:px-8"><div className="mx-auto max-w-5xl"><Link href="/admin" className="inline-flex items-center gap-2 text-xs text-white/45 hover:text-white"><ArrowLeft className="h-4 w-4" /> Admin workspace</Link><div className="mt-8 flex items-center gap-3"><KeyRound className="h-6 w-6 text-violet-200" /><div><p className="text-[10px] font-bold uppercase tracking-[0.23em] text-violet-200/55">Control center</p><h1 className="mt-1 text-3xl font-semibold">Claim verification</h1></div></div>
-    <section className="mt-7 rounded-3xl border border-white/[0.08] bg-[#0c0c0c] p-5 sm:p-7"><h2 className="font-semibold">Verify a claim key</h2><p className="mt-1 text-xs text-white/40">The raw key is hashed for lookup and is never saved or displayed again.</p><form action={findResellerClaim} className="mt-4 flex flex-col gap-3 sm:flex-row"><input name="claim_key" minLength={30} maxLength={100} required placeholder="Paste claim key" className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm outline-none focus:border-violet-300/40"/><button className="rounded-xl bg-violet-500 px-5 py-3 text-sm font-semibold hover:bg-violet-400">Verify key</button></form>{errorText ? <p role="alert" className="mt-4 text-sm text-rose-200">{errorText}</p> : null}</section>
-    {selected ? <section className="mt-5 rounded-3xl border border-violet-300/15 bg-violet-950/15 p-5 sm:p-7"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs uppercase tracking-wider text-white/40">Claim · {selected.id}</p><h2 className="mt-2 text-xl font-semibold">{rewardResult.data?.title ?? "Reward"}</h2></div><span className="rounded-full bg-white/[0.08] px-3 py-1.5 text-xs uppercase text-white/70">{selected.status}</span></div><div className="mt-4 grid gap-2 text-sm text-white/60 sm:grid-cols-2"><p>Reseller: {ownerResult.data?.email ?? selected.reseller_id}</p><p>Discord: {ownerResult.data?.discord_id ?? "Unavailable"}</p><p>Membership: {ownerResult.data?.membership ?? "Unavailable"}</p><p>Reward type: {rewardResult.data?.reward_type ?? "Unavailable"}</p><p>Created: {new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(selected.created_at))}</p><p>Last update: {new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(selected.updated_at))}</p></div>{rewardResult.data?.instructions ? <p className="mt-4 rounded-xl bg-black/20 p-4 text-xs leading-5 text-white/55">{rewardResult.data.instructions}</p> : null}{selected.rejection_reason ? <p className="mt-3 text-xs text-rose-200/75">Reason: {selected.rejection_reason}</p> : null}
-      <div className="mt-5 flex flex-wrap gap-2">{selected.status === "pending" ? <><form action={changeResellerClaimStatus}><input type="hidden" name="claim_id" value={selected.id}/><input type="hidden" name="status" value="approved"/><button className="rounded-lg bg-emerald-400/15 px-4 py-2.5 text-xs font-semibold text-emerald-100">Approve</button></form><form action={changeResellerClaimStatus} className="flex gap-2"><input type="hidden" name="claim_id" value={selected.id}/><input type="hidden" name="status" value="rejected"/><input name="reason" minLength={3} maxLength={500} required placeholder="Reason for rejection" className="w-48 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs"/><button className="rounded-lg bg-rose-400/10 px-4 py-2.5 text-xs font-semibold text-rose-100">Reject</button></form></> : null}{selected.status === "approved" ? <form action={changeResellerClaimStatus}><input type="hidden" name="claim_id" value={selected.id}/><input type="hidden" name="status" value="delivered"/><button className="rounded-lg bg-violet-400/15 px-4 py-2.5 text-xs font-semibold text-violet-100">Mark as delivered</button></form> : null}{["pending", "approved", "rejected", "delivered"].includes(selected.status) ? <form action={changeResellerClaimStatus}><input type="hidden" name="claim_id" value={selected.id}/><input type="hidden" name="status" value="revoked"/><button className="rounded-lg border border-white/10 px-4 py-2.5 text-xs text-white/55">Revoke</button></form> : null}</div><p className="mt-4 text-[10px] text-white/35">{params.notice ? "Claim status updated." : "The raw claim key is not retained. Approval does not imply delivery."}</p>
-    </section> : null}
-    <section className="mt-7 rounded-3xl border border-white/[0.08] bg-[#0c0c0c] p-5 sm:p-7"><h2 className="font-semibold">Recent claims</h2>{error ? <p className="mt-4 text-sm text-amber-100/70">Apply the reseller migration to view claim records.</p> : claims?.length ? <div className="mt-4 divide-y divide-white/[0.06]">{claims.map((claim) => <Link key={claim.id} href={`/admin/claims?id=${claim.id}`} className="flex flex-wrap justify-between gap-3 py-3 hover:bg-white/[0.02]"><span className="text-xs text-white/45">{claim.id}</span><span className="text-xs uppercase text-white/60">{claim.status}</span></Link>)}</div> : <p className="mt-3 text-sm text-white/40">No claims have been created.</p>}</section>
-  </div></main>;
+
+  const [ownerResult, rewardResult] = selected
+    ? await Promise.all([
+        admin.from("reseller_profiles").select("email, discord_id, membership").eq("user_id", selected.reseller_id).maybeSingle(),
+        admin.from("reseller_rewards").select("title, reward_type, instructions").eq("id", selected.reward_id).maybeSingle(),
+      ])
+    : [{ data: null }, { data: null }];
+
+  const errorText =
+    params.error === "notfound"
+      ? "No claim matches that key."
+      : params.error
+      ? "The claim could not be processed. Check its status and try again."
+      : null;
+
+  return (
+    <main className="reseller-page min-h-screen bg-[#070707] px-5 py-8 text-white sm:px-8">
+      <div className="mx-auto max-w-5xl">
+        <Link href="/admin" className="inline-flex items-center gap-2 text-xs text-white/45 hover:text-white">
+          <ArrowLeft className="h-4 w-4" /> Admin workspace
+        </Link>
+
+        <div className="mt-8 flex items-center gap-3">
+          <KeyRound className="h-6 w-6 text-violet-200" />
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.23em] text-violet-200/55">Control center</p>
+            <h1 className="mt-1 text-3xl font-semibold">Claim verification</h1>
+          </div>
+        </div>
+
+        {params.notice ? (
+          <p role="status" className="mt-5 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.05] p-3 text-sm text-emerald-100">
+            Claim status updated successfully.
+          </p>
+        ) : null}
+
+        <section className="mt-7 rounded-3xl border border-white/[0.08] bg-[#0c0c0c] p-5 sm:p-7">
+          <h2 className="font-semibold">Verify a claim key</h2>
+          <p className="mt-1 text-xs text-white/40">The raw key is hashed for lookup and is never saved or displayed again.</p>
+          <form action={findResellerClaim} className="mt-4 flex flex-col gap-3 sm:flex-row">
+            <input
+              name="claim_key"
+              minLength={30}
+              maxLength={100}
+              required
+              placeholder="Paste claim key"
+              className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm outline-none focus:border-violet-300/40"
+            />
+            <button className="rounded-xl bg-violet-500 px-5 py-3 text-sm font-semibold hover:bg-violet-400 transition">
+              Verify key
+            </button>
+          </form>
+          {errorText ? <p role="alert" className="mt-4 text-sm text-rose-200">{errorText}</p> : null}
+        </section>
+
+        {selected ? (
+          <section className="mt-5 rounded-3xl border border-violet-300/15 bg-violet-950/15 p-5 sm:p-7">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-wider text-white/40">Claim · {selected.id}</p>
+                <h2 className="mt-2 text-xl font-semibold">{rewardResult.data?.title ?? "Reward"}</h2>
+              </div>
+              <span className="rounded-full bg-white/[0.08] px-3 py-1.5 text-xs uppercase text-white/70">
+                {selected.status}
+              </span>
+            </div>
+
+            <div className="mt-4 grid gap-2 text-sm text-white/60 sm:grid-cols-2">
+              <p>Reseller: {ownerResult.data?.email ?? selected.reseller_id}</p>
+              <p>Discord: {ownerResult.data?.discord_id ?? "Unavailable"}</p>
+              <p>Membership: {ownerResult.data?.membership ?? "Unavailable"}</p>
+              <p>Reward type: {rewardResult.data?.reward_type ?? "Unavailable"}</p>
+              <p>Created: {new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(selected.created_at))}</p>
+              <p>Last update: {new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(selected.updated_at))}</p>
+            </div>
+
+            {rewardResult.data?.instructions ? (
+              <p className="mt-4 rounded-xl bg-black/20 p-4 text-xs leading-5 text-white/55">{rewardResult.data.instructions}</p>
+            ) : null}
+
+            {selected.rejection_reason ? (
+              <p className="mt-3 text-xs text-rose-200/75">Reason: {selected.rejection_reason}</p>
+            ) : null}
+
+            <div className="mt-5 flex flex-wrap gap-2">
+              {selected.status === "pending" ? (
+                <>
+                  <form action={changeResellerClaimStatus}>
+                    <input type="hidden" name="claim_id" value={selected.id} />
+                    <input type="hidden" name="status" value="approved" />
+                    <button className="rounded-lg bg-emerald-400/15 px-4 py-2.5 text-xs font-semibold text-emerald-100 hover:bg-emerald-400/25">Approve</button>
+                  </form>
+                  <form action={changeResellerClaimStatus} className="flex gap-2">
+                    <input type="hidden" name="claim_id" value={selected.id} />
+                    <input type="hidden" name="status" value="rejected" />
+                    <input
+                      name="reason"
+                      minLength={3}
+                      maxLength={500}
+                      required
+                      placeholder="Reason for rejection"
+                      className="w-48 rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-xs outline-none"
+                    />
+                    <button className="rounded-lg bg-rose-400/10 px-4 py-2.5 text-xs font-semibold text-rose-100 hover:bg-rose-400/20">Reject</button>
+                  </form>
+                </>
+              ) : null}
+
+              {selected.status === "approved" ? (
+                <form action={changeResellerClaimStatus}>
+                  <input type="hidden" name="claim_id" value={selected.id} />
+                  <input type="hidden" name="status" value="delivered" />
+                  <button className="rounded-lg bg-violet-400/15 px-4 py-2.5 text-xs font-semibold text-violet-100 hover:bg-violet-400/25">Mark as delivered</button>
+                </form>
+              ) : null}
+
+              {["pending", "approved", "rejected", "delivered"].includes(selected.status) ? (
+                <form action={changeResellerClaimStatus}>
+                  <input type="hidden" name="claim_id" value={selected.id} />
+                  <input type="hidden" name="status" value="revoked" />
+                  <button className="rounded-lg border border-white/10 px-4 py-2.5 text-xs text-white/55 hover:bg-white/[0.05]">Revoke</button>
+                </form>
+              ) : null}
+            </div>
+
+            <p className="mt-4 text-[10px] text-white/35">The raw claim key is not retained. Approval does not imply delivery.</p>
+          </section>
+        ) : null}
+
+        <section className="mt-7 rounded-3xl border border-white/[0.08] bg-[#0c0c0c] p-5 sm:p-7">
+          <h2 className="font-semibold">Recent claims</h2>
+          {error ? (
+            <p className="mt-4 text-sm text-amber-100/70">Apply the reseller migration to view claim records.</p>
+          ) : claims?.length ? (
+            <div className="mt-4 divide-y divide-white/[0.06]">
+              {claims.map((claim) => (
+                <Link
+                  key={claim.id}
+                  href={`/admin/claims?id=${claim.id}`}
+                  className="flex flex-wrap justify-between gap-3 py-3 hover:bg-white/[0.02] px-2 rounded-lg transition"
+                >
+                  <span className="text-xs text-white/45">{claim.id}</span>
+                  <span className="text-xs uppercase text-white/60">{claim.status}</span>
+                </Link>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-white/40">No claims have been created.</p>
+          )}
+        </section>
+      </div>
+    </main>
+  );
 }

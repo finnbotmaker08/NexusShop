@@ -70,9 +70,21 @@ export async function saveProduct(data: FormData) {
   const salePrice = salePriceValue === "" ? null : Number(salePriceValue);
   const stock = stockValue === "" ? null : Number.parseInt(stockValue, 10);
 
-  // Soepelere validatiecontrole zodat het formulier niet onterecht wordt geblokkeerd
-  if (!name || !description || !Number.isFinite(price) || price < 0) {
-    redirect(`/admin?error=${encodeURIComponent("Vul minimaal een geldige naam, beschrijving en prijs in.")}#products`);
+  const isValidOptionalUrl = (url: string) => url === "" || isValidExternalUrl(url);
+
+  if (
+    !name ||
+    !slug ||
+    !description ||
+    !Number.isFinite(price) ||
+    price < 0 ||
+    (salePrice !== null && (!Number.isFinite(salePrice) || salePrice < 0)) ||
+    (stock !== null && (!/^\d+$/.test(stockValue) || !Number.isSafeInteger(stock) || stock < 0)) ||
+    !["stock", "manual", "link"].includes(deliveryType) ||
+    !isValidOptionalUrl(imageUrl) ||
+    !isValidOptionalUrl(externalUrl)
+  ) {
+    redirect(`/admin?error=${encodeURIComponent("Validation check failed: check fields")}`);
   }
 
   const values = {
@@ -97,7 +109,7 @@ export async function saveProduct(data: FormData) {
     : await supabase.from("products").insert(values);
 
   if (result.error) {
-    console.error("🔴 SUPABASE ERROR:", result.error.message);
+    console.error("Could not save product:", result.error.message);
     redirect(`/admin?error=${encodeURIComponent(result.error.message)}#products`);
   }
 
@@ -118,6 +130,7 @@ export async function deleteProduct(data: FormData) {
     .eq("product_id", id);
 
   if (keyError) {
+    console.error("Could not check product inventory before deletion:", keyError.message);
     redirect(`/admin?error=${encodeURIComponent(keyError.message)}#products`);
   }
   if ((count ?? 0) > 0) {
@@ -126,6 +139,7 @@ export async function deleteProduct(data: FormData) {
 
   const { error } = await supabase.from("products").delete().eq("id", id);
   if (error) {
+    console.error("Could not delete product:", error.message);
     redirect(`/admin?error=${encodeURIComponent(error.message)}#products`);
   }
 
@@ -148,6 +162,7 @@ export async function updateProductStatus(data: FormData) {
     .eq("id", id);
 
   if (error) {
+    console.error("Could not update product status:", error.message);
     redirect(`/admin?error=${encodeURIComponent(error.message)}#products`);
   }
 
@@ -173,6 +188,7 @@ export async function saveCategory(data: FormData) {
     : await supabase.from("store_categories").insert(values);
 
   if (result.error) {
+    console.error("Could not save category:", result.error.message);
     redirect(`/admin?error=${encodeURIComponent(result.error.message)}#categories`);
   }
 
@@ -189,6 +205,14 @@ export async function saveStoreSettings(data: FormData) {
     readText(data, "maintenance_message", 500) || "We will be back shortly.";
   const maintenanceMode = readCheckbox(data, "maintenance_mode");
 
+  if (
+    !isValidDiscordInvite(discordServerUrl) ||
+    !isValidDiscordInvite(discordSupportUrl) ||
+    (supportEmail !== "" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail))
+  ) {
+    redirect("/admin?error=settings#settings");
+  }
+
   const { error } = await supabase.from("store_settings").upsert(
     {
       id: "default",
@@ -203,6 +227,7 @@ export async function saveStoreSettings(data: FormData) {
   );
 
   if (error) {
+    console.error("Could not save store settings:", error.message);
     redirect(`/admin?error=${encodeURIComponent(error.message)}#settings`);
   }
 
@@ -228,6 +253,59 @@ export async function savePaymentSettings(data: FormData) {
   const tikkieReminderEmail = readText(data, "tikkie_reminder_email", 254).toLowerCase();
   const tikkieReminderEnabled = readCheckbox(data, "tikkie_reminder_enabled");
 
+  const validBitcoinAddress =
+    /^(bc1[ac-hj-np-z02-9]{11,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/.test(
+      bitcoinAddress,
+    );
+  const validLitecoinAddress =
+    /^(ltc1[ac-hj-np-z02-9]{11,71}|[LM3][a-km-zA-HJ-NP-Z1-9]{25,34})$/.test(
+      litecoinAddress,
+    );
+
+  let validTikkieUrl = !tikkieUrl;
+  if (tikkieUrl) {
+    try {
+      const url = new URL(tikkieUrl);
+      validTikkieUrl =
+        url.protocol === "https:" &&
+        ["tikkie.me", "www.tikkie.me", "pay.tikkie.me", "ing.nl"].includes(
+          url.hostname.toLowerCase(),
+        ) &&
+        !url.username &&
+        !url.password;
+    } catch {
+      validTikkieUrl = false;
+    }
+  }
+
+  const validDate = (value: string) =>
+    value === "" ||
+    (/^\d{4}-\d{2}-\d{2}$/.test(value) &&
+      !Number.isNaN(Date.parse(`${value}T00:00:00Z`)));
+
+  if (
+    (bitcoinEnabled && !validBitcoinAddress) ||
+    (litecoinEnabled && !validLitecoinAddress) ||
+    (tikkieEnabled && (!tikkieUrl || !validTikkieUrl)) ||
+    (!tikkieEnabled && tikkieUrl && !validTikkieUrl) ||
+    !Number.isInteger(bitcoinConfirmations) ||
+    bitcoinConfirmations < 1 ||
+    bitcoinConfirmations > 100 ||
+    !Number.isInteger(litecoinConfirmations) ||
+    litecoinConfirmations < 1 ||
+    litecoinConfirmations > 100 ||
+    !Number.isInteger(timeoutMinutes) ||
+    timeoutMinutes < 5 ||
+    timeoutMinutes > 10080 ||
+    !validDate(tikkieResetDate) ||
+    !validDate(tikkieReminderDate) ||
+    (tikkieReminderEnabled &&
+      (!tikkieReminderDate ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(tikkieReminderEmail)))
+  ) {
+    redirect("/admin?error=payments#payments");
+  }
+
   const { error } = await supabase.from("store_payment_settings").upsert(
     {
       id: "default",
@@ -252,6 +330,7 @@ export async function savePaymentSettings(data: FormData) {
   );
 
   if (error) {
+    console.error("Could not save payment settings:", error.message);
     redirect(`/admin?error=${encodeURIComponent(error.message)}#payments`);
   }
 
@@ -271,7 +350,60 @@ export async function approveStorePayment(data: FormData) {
     p_payment_id: paymentId,
   });
   if (error || typeof status !== "string") {
+    if (error) console.error("Could not approve customer payment:", error.message);
     redirect(`/admin?error=${encodeURIComponent(error?.message ?? "Failed to approve payment")}#payments`);
+  }
+
+  const { data: payment, error: paymentError } = await supabase
+    .from("store_payments")
+    .select("order_id")
+    .eq("id", paymentId)
+    .maybeSingle();
+
+  const { data: order, error: orderError } = payment
+    ? await supabase
+        .from("store_orders")
+        .select("order_number, customer_email")
+        .eq("id", payment.order_id)
+        .maybeSingle()
+    : { data: null, error: null };
+
+  if (paymentError || orderError) {
+    console.error(
+      "Payment approved, but notification details could not be loaded:",
+      paymentError?.message ?? orderError?.message,
+    );
+  } else if (payment && order) {
+    try {
+      const accountUrl = new URL("/account", process.env.NEXT_PUBLIC_SITE_URL);
+      await sendStoreEmail({
+        dedupeKey: `payment-approved/${payment.order_id}`,
+        recipient: order.customer_email,
+        subject: `Payment approved for Nexus Suppliers order ${order.order_number}`,
+        heading: "Your payment has been approved",
+        message:
+          status === "fulfilled"
+            ? "Your payment is approved and the digital delivery is available in your account."
+            : "Your payment is approved. The store is preparing your digital delivery.",
+        details: [`Order: ${order.order_number}`, `Status: ${status}`],
+        actionUrl: accountUrl.href,
+        actionLabel: "View your order",
+      });
+      if (status === "fulfilled") {
+        await sendStoreEmail({
+          dedupeKey: `order-completed/${payment.order_id}`,
+          recipient: order.customer_email,
+          subject: `Nexus Suppliers order ${order.order_number} has been delivered`,
+          heading: "Your digital order is complete",
+          message: "Your digital delivery is now available in your customer account.",
+          details: [`Order: ${order.order_number}`],
+          actionUrl: accountUrl.href,
+          actionLabel: "View your delivery",
+        });
+      }
+    } catch (emailError) {
+      console.error("Payment was approved but its customer email could not be sent:", emailError);
+    }
   }
 
   revalidatePath("/admin");
@@ -292,7 +424,44 @@ export async function rejectStorePayment(data: FormData) {
     p_reason: reason,
   });
   if (error || rejected !== true) {
+    if (error) console.error("Could not reject customer payment:", error.message);
     redirect(`/admin?error=${encodeURIComponent(error?.message ?? "Could not reject payment")}#payments`);
+  }
+
+  const { data: payment, error: paymentError } = await supabase
+    .from("store_payments")
+    .select("order_id, rejection_reason")
+    .eq("id", paymentId)
+    .maybeSingle();
+
+  const { data: order, error: orderError } = payment
+    ? await supabase
+        .from("store_orders")
+        .select("order_number, customer_email")
+        .eq("id", payment.order_id)
+        .maybeSingle()
+    : { data: null, error: null };
+
+  if (paymentError || orderError) {
+    console.error(
+      "Payment rejected, but notification details could not be loaded:",
+      paymentError?.message ?? orderError?.message,
+    );
+  } else if (payment && order) {
+    try {
+      await sendStoreEmail({
+        dedupeKey: `payment-rejected/${payment.order_id}`,
+        recipient: order.customer_email,
+        subject: `Payment needs attention for Nexus Suppliers order ${order.order_number}`,
+        heading: "Your payment needs attention",
+        message: payment.rejection_reason ?? "The store could not approve this payment.",
+        details: [`Order: ${order.order_number}`],
+        actionUrl: new URL("/account", process.env.NEXT_PUBLIC_SITE_URL).href,
+        actionLabel: "Contact support",
+      });
+    } catch (emailError) {
+      console.error("Payment was rejected but its customer email could not be sent:", emailError);
+    }
   }
 
   revalidatePath("/admin");
@@ -304,6 +473,10 @@ export async function saveDiscordWebhook(data: FormData) {
   const supabase = await getAdminClient();
   const webhookUrl = readText(data, "webhook_url", 2000);
 
+  if (!webhookUrl || !isValidDiscordWebhook(webhookUrl)) {
+    redirect("/admin?error=webhook#discord");
+  }
+
   const { error } = await supabase.from("discord_webhook_settings").upsert(
     {
       id: "default",
@@ -314,6 +487,7 @@ export async function saveDiscordWebhook(data: FormData) {
   );
 
   if (error) {
+    console.error("Could not save Discord webhook:", error.message);
     redirect(`/admin?error=${encodeURIComponent(error.message)}#discord`);
   }
 
@@ -329,6 +503,7 @@ export async function clearDiscordWebhook() {
     .eq("id", "default");
 
   if (error) {
+    console.error("Could not clear Discord webhook:", error.message);
     redirect(`/admin?error=${encodeURIComponent(error.message)}#discord`);
   }
 
@@ -345,10 +520,16 @@ export async function testDiscordWebhook() {
     .maybeSingle();
 
   if (error || !data) {
+    if (error) console.error("Could not load Discord webhook:", error.message);
     redirect(`/admin?error=${encodeURIComponent(error?.message ?? "Webhook not found")}#discord`);
   }
 
+  if (!isValidDiscordWebhook(data.webhook_url)) {
+    redirect("/admin?error=webhook#discord");
+  }
+
   let response: Response;
+
   try {
     response = await fetch(data.webhook_url, {
       method: "POST",
@@ -357,19 +538,28 @@ export async function testDiscordWebhook() {
         embeds: [
           {
             title: "Nexus Suppliers connection test",
-            description: "Discord notifications are connected.",
+            description:
+              "Discord notifications are connected. This is a test only; no order was created.",
             color: 0xffffff,
+            footer: { text: "Nexus Suppliers · Store management" },
             timestamp: new Date().toISOString(),
           },
         ],
       }),
       cache: "no-store",
+      redirect: "error",
     });
-  } catch (err) {
+  } catch (error) {
+    console.error("Discord webhook request failed:", error);
     redirect("/admin?error=webhook#discord");
   }
 
   if (!response.ok) {
+    console.error(
+      "Discord webhook returned an error:",
+      response.status,
+      response.statusText,
+    );
     redirect("/admin?error=webhook#discord");
   }
 
@@ -384,6 +574,15 @@ export async function addProductKeys(data: FormData) {
     .map((line) => line.trim())
     .filter(Boolean);
 
+  if (
+    !productId ||
+    keyLines.length === 0 ||
+    keyLines.length > 100 ||
+    keyLines.some((key) => key.length > 500)
+  ) {
+    redirect("/admin?error=keys#keys");
+  }
+
   const { error } = await supabase.from("product_keys").insert(
     [...new Set(keyLines)].map((keyValue) => ({
       product_id: productId,
@@ -392,6 +591,7 @@ export async function addProductKeys(data: FormData) {
   );
 
   if (error) {
+    console.error("Could not add product keys:", error.message);
     redirect(`/admin?error=${encodeURIComponent(error.message)}#keys`);
   }
 
@@ -416,6 +616,7 @@ export async function deleteProductKey(data: FormData) {
     .maybeSingle();
 
   if (error || !deletedKey) {
+    if (error) console.error("Could not delete product key:", error.message);
     redirect(`/admin?error=${encodeURIComponent(error?.message ?? "Key could not be deleted")}#keys`);
   }
 
@@ -427,11 +628,16 @@ export async function retryPaidOrderFulfillment(data: FormData) {
   const supabase = await getAdminClient();
   const orderId = readText(data, "order_id", 36);
 
+  if (!/^[0-9a-f-]{36}$/i.test(orderId)) {
+    redirect("/admin?error=order#orders");
+  }
+
   const { data: fulfilled, error } = await supabase.rpc("fulfill_store_order", {
     p_order_id: orderId,
   });
 
   if (error) {
+    console.error("Could not retry order fulfillment:", error.message);
     redirect(`/admin?error=${encodeURIComponent(error.message)}#orders`);
   }
 
@@ -449,6 +655,14 @@ export async function completeManualStoreOrder(data: FormData) {
   const orderId = readText(data, "order_id", 36);
   const deliveryContent = readText(data, "delivery_content", 4000);
 
+  if (
+    !/^[0-9a-f-]{36}$/i.test(orderId) ||
+    deliveryContent.length === 0 ||
+    deliveryContent.length > 4000
+  ) {
+    redirect("/admin?error=manual-delivery#orders");
+  }
+
   const { data: completed, error } = await supabase.rpc(
     "complete_manual_store_order",
     {
@@ -458,7 +672,38 @@ export async function completeManualStoreOrder(data: FormData) {
   );
 
   if (error || completed !== true) {
+    if (error) {
+      console.error("Could not complete manual delivery:", error.message);
+    }
     redirect(`/admin?error=${encodeURIComponent(error?.message ?? "Manual delivery failed")}#orders`);
+  }
+
+  const { data: order, error: orderError } = await supabase
+    .from("store_orders")
+    .select("order_number, customer_email")
+    .eq("id", orderId)
+    .maybeSingle();
+
+  if (orderError) {
+    console.error(
+      "Manual delivery completed, but notification details could not be loaded:",
+      orderError.message,
+    );
+  } else if (order) {
+    try {
+      await sendStoreEmail({
+        dedupeKey: `order-completed/${orderId}`,
+        recipient: order.customer_email,
+        subject: `Nexus Suppliers order ${order.order_number} has been delivered`,
+        heading: "Your digital order is complete",
+        message: "Your digital delivery is now available in your customer account.",
+        details: [`Order: ${order.order_number}`],
+        actionUrl: new URL("/account", process.env.NEXT_PUBLIC_SITE_URL).href,
+        actionLabel: "View your delivery",
+      });
+    } catch (emailError) {
+      console.error("Manual delivery completed but its customer email could not be sent:", emailError);
+    }
   }
 
   revalidatePath("/admin");

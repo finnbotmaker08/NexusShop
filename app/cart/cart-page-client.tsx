@@ -51,38 +51,6 @@ export function CartPageClient() {
   const [loadingQuote, setLoadingQuote] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [checkingOut, setCheckingOut] = useState(false);
-  const [paymentMethods, setPaymentMethods] = useState<string[]>(["paddle"]);
-  const [paymentMethod, setPaymentMethod] = useState("paddle");
-
-  useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const response = await fetch("/api/payment-options", {
-            cache: "no-store",
-          });
-          const result: unknown = await response.json();
-          const methods =
-            typeof result === "object" &&
-            result !== null &&
-            "methods" in result &&
-            Array.isArray(result.methods) &&
-            result.methods.every((method) => typeof method === "string")
-              ? result.methods
-              : ["paddle"];
-          
-          setPaymentMethods(methods.length > 0 ? methods : ["paddle"]);
-          setPaymentMethod((current) =>
-            current && methods.includes(current) ? current : (methods[0] ?? "paddle"),
-          );
-        } catch {
-          setPaymentMethods(["paddle"]);
-          setPaymentMethod("paddle");
-        }
-      })();
-    }, 0);
-    return () => window.clearTimeout(timeout);
-  }, []);
 
   const cartSlugs = useMemo(
     () => Object.keys(quantities).sort(),
@@ -144,7 +112,8 @@ export function CartPageClient() {
     (slug) => !availableQuoteSlugs.has(slug),
   );
 
-  async function startCheckout() {
+  async function startCheckout(e: React.FormEvent) {
+    e.preventDefault();
     setCheckingOut(true);
     try {
       const response = await fetch("/api/checkout", {
@@ -349,23 +318,22 @@ export function CartPageClient() {
                 Taxes, if applicable, are calculated by the payment provider.
               </p>
               
-              <div className="relative z-50 mt-6">
+              <form onSubmit={startCheckout} className="mt-6">
                 <button
-                  type="button"
-                  onClick={startCheckout}
-                  style={{ opacity: 1, pointerEvents: "auto", cursor: "pointer", color: "#ffffff" }}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-bold shadow-[0_12px_32px_rgba(37,99,235,0.25)] transition hover:bg-blue-500"
+                  type="submit"
+                  style={{ opacity: 1, pointerEvents: "auto", cursor: "pointer" }}
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-bold text-white shadow-[0_12px_32px_rgba(37,99,235,0.25)] transition hover:bg-blue-500"
                 >
                   {checkingOut ? (
-                    <LoaderCircle className="h-4 w-4 animate-spin" style={{ color: "#ffffff" }} />
+                    <LoaderCircle className="h-4 w-4 animate-spin text-white" />
                   ) : (
-                    <ArrowRight className="h-4 w-4" style={{ color: "#ffffff" }} />
+                    <ArrowRight className="h-4 w-4 text-white" />
                   )}
-                  <span style={{ color: "#ffffff" }} className="font-bold">
+                  <span className="text-white font-bold" style={{ color: "#ffffff" }}>
                     {checkingOut ? "Preparing checkout..." : "Continue to checkout"}
                   </span>
                 </button>
-              </div>
+              </form>
 
               <Link
                 href="/products"
