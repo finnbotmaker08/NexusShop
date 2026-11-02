@@ -66,7 +66,7 @@ export function CartPageClient() {
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [paymentMethods, setPaymentMethods] = useState<string[]>([]);
   const [paymentMethodsError, setPaymentMethodsError] = useState<string | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("paddle");
   const [manualOrder, setManualOrder] = useState<ManualOrderResult | null>(null);
   const [transactionId, setTransactionId] = useState("");
   const [paymentStatusMessage, setPaymentStatusMessage] = useState<string | null>(null);
@@ -96,12 +96,13 @@ export function CartPageClient() {
           }
           setPaymentMethods(methods);
           setPaymentMethod((current) =>
-            current && methods.includes(current) ? current : (methods[0] ?? ""),
+            current && methods.includes(current) ? current : (methods[0] ?? "paddle"),
           );
         } catch (error) {
           setPaymentMethodsError(
             error instanceof Error ? error.message : "Payment methods are unavailable.",
           );
+          setPaymentMethod("paddle");
         }
       })();
     }, 0);
@@ -176,15 +177,15 @@ export function CartPageClient() {
     setCheckingOut(true);
     setCheckoutError(null);
     try {
-      const paddleCheckout = paymentMethod === "paddle";
+      const paddleCheckout = !paymentMethod || paymentMethod === "paddle";
       const response = await fetch(
         paddleCheckout ? "/api/checkout" : "/api/manual-checkout",
         {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...(paddleCheckout ? {} : { paymentMethod }),
-          items: cartSlugs.map((productSlug) => ({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ...(paddleCheckout ? {} : { paymentMethod }),
+            items: cartSlugs.map((productSlug) => ({
               productSlug,
               quantity: quantities[productSlug],
             })),
@@ -652,22 +653,16 @@ export function CartPageClient() {
               <button
                 type="button"
                 onClick={startCheckout}
-                disabled={
-                  checkingOut ||
-                  quote.length === 0 ||
-                  hasUnavailableItems ||
-                  stockError ||
-                  paymentMethods.length === 0 ||
-                  !paymentMethod
-                }
-                className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-500 px-4 py-3.5 text-sm font-bold text-white shadow-[0_12px_32px_rgba(37,99,235,0.18)] transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-45"
+                className="mt-6 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-bold text-white shadow-[0_12px_32px_rgba(37,99,235,0.25)] transition hover:bg-blue-500"
               >
                 {checkingOut ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                  <LoaderCircle className="h-4 w-4 animate-spin text-white" />
                 ) : (
-                  <ArrowRight className="h-4 w-4" />
+                  <ArrowRight className="h-4 w-4 text-white" />
                 )}
-                {checkingOut ? "Preparing checkout..." : "Continue to checkout"}
+                <span className="text-white">
+                  {checkingOut ? "Preparing checkout..." : "Continue to checkout"}
+                </span>
               </button>
               <Link
                 href="/products"
