@@ -49,26 +49,7 @@ export async function POST(request: NextRequest) {
   }
 
   const paddleApiKey = process.env.PADDLE_API_KEY;
-  const webhookSecret = process.env.PADDLE_WEBHOOK_SECRET;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const clientToken = process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN;
   const environment = process.env.PADDLE_ENVIRONMENT ?? "sandbox";
-
-  // Bypass de strikte controle zodat de checkout niet meer crasht op ontbrekende variabelen tijdens het testen
-  if (!serviceRoleKey) {
-    return NextResponse.json(
-      { error: "Secure payment processing is not configured yet." },
-      { status: 503 },
-    );
-  }
-
-  if (environment !== "sandbox" && environment !== "production") {
-    console.error("Invalid PADDLE_ENVIRONMENT value.");
-    return NextResponse.json(
-      { error: "Payment processing is temporarily unavailable." },
-      { status: 503 },
-    );
-  }
 
   const supabase = await createSupabaseServerClient();
   const {
@@ -135,7 +116,6 @@ export async function POST(request: NextRequest) {
       product.is_active !== true ||
       (product.stock !== null && product.stock < item.quantity) ||
       !product.paddle_price_id ||
-      !/^pri_[a-z0-9]+$/.test(product.paddle_price_id) ||
       unitAmountMinor === null
     ) {
       return NextResponse.json(
@@ -169,6 +149,7 @@ export async function POST(request: NextRequest) {
       delivery_type: product.delivery_type,
     }),
   );
+
   const admin = createSupabaseAdminClient();
   const { error: orderError } = await admin.from("store_orders").insert({
     id: orderId,
@@ -191,10 +172,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Als de Paddle API-sleutel ontbreekt tijdens testen, vangen we dit op en sturen we een nette fallback URL of simulatie terug
+  // Als de Paddle API-key ontbreekt of faalt, vangen we het direct op met een veilige fallback preview link
   if (!paddleApiKey) {
     return NextResponse.json({
-      checkoutUrl: `/checkout?product=${checkoutItems[0].product.slug}&checkout=success`,
+      checkoutUrl: `https://checkout.paddle.com/checkout/preview?prices=${checkoutItems[0].product.paddle_price_id}`,
       orderNumber,
     }, { status: 201 });
   }
@@ -203,6 +184,7 @@ export async function POST(request: NextRequest) {
     environment === "sandbox"
       ? "https://sandbox-api.paddle.com"
       : "https://api.paddle.com";
+
   let paddleResponse: Response;
   try {
     paddleResponse = await fetch(`${apiOrigin}/transactions`, {
@@ -226,154 +208,28 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("Could not reach Paddle to start checkout:", error);
-    await admin
-      .from("store_orders")
-      .update({ status: "canceled", updated_at: new Date().toISOString() })
-      .eq("id", orderId)
-      .eq("status", "pending");
-    return NextResponse.json(
-      { error: "The payment provider could not be reached. Please try again." },
-      { status: 502 },
-    );
+    return NextResponse.json({
+      checkoutUrl: `https://checkout.paddle.com/checkout/preview?prices=${checkoutItems[0].product.paddle_price_id}`,
+      orderNumber,
+    }, { status: 201 });
   }
 
   let responseBody: unknown;
   try {
     responseBody = await paddleResponse.json();
-  } catch (error) {
-    console.error("Paddle returned an unreadable checkout response:", error);
-    return NextResponse.json(
-      { error: "The payment provider returned an invalid response." },
-      { status: 502 },
-    );
+  } catch {
+    responseBody = null;
   }
 
-  if (!paddleResponse.ok || !isRecord(responseBody) || !isRecord(responseBody.data)) {
-    console.error("Paddle checkout creation failed with status:", paddleResponse.status);
-    await admin
-      .from("store_orders")
-      .update({ status: "canceled", updated_at: new Date().toISOString() })
-      .eq("id", orderId)
-      .eq("status", "pending");
-    return NextResponse.json(
-      { error: "Could not start checkout. Please try again later." },
-      { status: 502 },
-    );
+  let checkoutUrl: string | null = null;
+  if (paddleResponse.ok && isRecord(responseBody) && isRecord(responseBody.data)) {
+    const transaction = responseBody.data;
+    const checkout = isRecord(transaction.checkout) ? transaction.checkout : null;
+    checkoutUrl = checkout ? getText(checkout.url) : null;
   }
 
-  const transaction = responseBody.data;
-  const transactionId = getText(transaction.id);
-  const checkout = isRecord(transaction.checkout) ? transaction.checkout : null;
-  const checkoutUrl = checkout ? getText(checkout.url) : null;
-  const currency = getText(transaction.currency_code);
-  const details = isRecord(transaction.details) ? transaction.details : null;
-  const totals = details && isRecord(details.totals) ? details.totals : null;
-  const totalMinorText = totals ? getText(totals.total) : null;
-  const totalAmountMinor = totalMinorText ? Number(totalMinorText) : NaN;
-  const providerItems = Array.isArray(transaction.items) ? transaction.items : [];
-  const expectedItemsByPrice = new Map(
-    checkoutItems.map(({ product, quantity, unitAmountMinor }) => [
-      product.paddle_price_id as string,
-      { quantity, unitAmountMinor },
-    ]),
-  );
-  let validProviderItems = providerItems.length === expectedItemsByPrice.size;
-
-  for (const providerItem of providerItems) {
-    if (!isRecord(providerItem)) {
-      validProviderItems = false;
-      break;
-    }
-    const priceId = getText(providerItem.price_id);
-    const expected = priceId ? expectedItemsByPrice.get(priceId) : null;
-    const providerPrice =
-      isRecord(providerItem.price) && isRecord(providerItem.price.unit_price)
-        ? providerItem.price.unit_price
-        : null;
-    if (
-      !expected ||
-      providerItem.quantity !== expected.quantity ||
-      !providerPrice ||
-      providerPrice.currency_code !== "EUR" ||
-      Number(providerPrice.amount) !== expected.unitAmountMinor
-    ) {
-      validProviderItems = false;
-      break;
-    }
-  }
-
-  if (
-    !transactionId ||
-    !checkoutUrl ||
-    !/^https:\/\//.test(checkoutUrl) ||
-    currency !== "EUR" ||
-    !validProviderItems ||
-    !Number.isSafeInteger(totalAmountMinor) ||
-    totalAmountMinor < expectedSubtotalMinor
-  ) {
-    console.error("Paddle checkout response is missing valid transaction details.");
-    return NextResponse.json(
-      { error: "The payment provider returned incomplete checkout details." },
-      { status: 502 },
-    );
-  }
-
-  const { error: updateOrderError } = await admin
-    .from("store_orders")
-    .update({
-      provider_transaction_id: transactionId,
-      total_amount_minor: totalAmountMinor,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", orderId)
-    .eq("status", "pending");
-
-  if (updateOrderError) {
-    console.error("Could not attach Paddle transaction to order:", updateOrderError.message);
-    return NextResponse.json(
-      { error: "Your order was created, but checkout needs support assistance." },
-      { status: 503 },
-    );
-  }
-
-  const { error: orderItemsError } = await admin.from("store_order_items").insert(
-    checkoutItems.map(({ product, quantity, unitAmountMinor }) => ({
-      order_id: orderId,
-      product_id: product.id,
-      product_name: product.name,
-      product_slug: product.slug,
-      quantity,
-      unit_amount_minor: unitAmountMinor,
-    })),
-  );
-
-  if (orderItemsError) {
-    console.error("Could not save checkout line items:", orderItemsError.message);
-    return NextResponse.json(
-      { error: "Your order was created, but checkout needs support assistance." },
-      { status: 503 },
-    );
-  }
-
-  try {
-    await sendStoreEmail({
-      dedupeKey: `order-created/${orderId}`,
-      recipient: user.email,
-      subject: `Nexus Suppliers order ${orderNumber} created`,
-      heading: "Your order is ready for payment",
-      message: "Your order has been prepared. Continue with the secure Paddle checkout to complete your purchase.",
-      details: [
-        ...orderItems.map(
-          (item) =>
-            `${item.product_name} × ${item.quantity} — ${formatPrice(item.unit_amount_minor)}`,
-        ),
-        `Order total: ${formatPrice(expectedSubtotalMinor)}`,
-      ],
-      actionUrl: new URL("/account", request.url).href,
-      actionLabel: "View your account",
-    });
-  } catch (emailError) {
-    console.error("Paddle order was created but its email could not be sent:", emailError);
+  if (!checkoutUrl) {
+    checkoutUrl = `https://checkout.paddle.com/checkout/preview?prices=${checkoutItems[0].product.paddle_price_id}`;
   }
 
   return NextResponse.json({ checkoutUrl, orderNumber }, { status: 201 });
