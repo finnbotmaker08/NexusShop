@@ -68,8 +68,10 @@ export async function saveProduct(data: FormData) {
   const active = readCheckbox(data, "is_active");
   const price = Number(priceValue);
   const salePrice = salePriceValue === "" ? null : Number(salePriceValue);
-  const stock =
-    stockValue === "" ? null : Number.parseInt(stockValue, 10);
+  const stock = stockValue === "" ? null : Number.parseInt(stockValue, 10);
+
+  // Correcte validatie voor optionele URL's (leeg is toegestaan, anders moet het geldig zijn)
+  const isValidOptionalUrl = (url: string) => url === "" || isValidExternalUrl(url);
 
   if (
     !name ||
@@ -77,13 +79,11 @@ export async function saveProduct(data: FormData) {
     !description ||
     !Number.isFinite(price) ||
     price < 0 ||
-    (salePrice !== null &&
-      (!Number.isFinite(salePrice) || salePrice < 0)) ||
-    (stock !== null &&
-      (!/^\d+$/.test(stockValue) || !Number.isSafeInteger(stock) || stock < 0)) ||
+    (salePrice !== null && (!Number.isFinite(salePrice) || salePrice < 0)) ||
+    (stock !== null && (!/^\d+$/.test(stockValue) || !Number.isSafeInteger(stock) || stock < 0)) ||
     !["stock", "manual", "link"].includes(deliveryType) ||
-    !isValidExternalUrl(imageUrl) ||
-    !isValidExternalUrl(externalUrl) ||
+    !isValidOptionalUrl(imageUrl) ||
+    !isValidOptionalUrl(externalUrl) ||
     (paddlePriceId !== "" && !/^pri_[a-z0-9]+$/.test(paddlePriceId))
   ) {
     redirect(`/admin?error=product#products`);
@@ -210,8 +210,7 @@ export async function saveStoreSettings(data: FormData) {
   if (
     !isValidDiscordInvite(discordServerUrl) ||
     !isValidDiscordInvite(discordSupportUrl) ||
-    (supportEmail !== "" &&
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail))
+    (supportEmail !== "" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supportEmail))
   ) {
     redirect("/admin?error=settings#settings");
   }
@@ -255,6 +254,7 @@ export async function savePaymentSettings(data: FormData) {
   const tikkieReminderDate = readText(data, "tikkie_reminder_date", 10);
   const tikkieReminderEmail = readText(data, "tikkie_reminder_email", 254).toLowerCase();
   const tikkieReminderEnabled = readCheckbox(data, "tikkie_reminder_enabled");
+
   const validBitcoinAddress =
     /^(bc1[ac-hj-np-z02-9]{11,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/.test(
       bitcoinAddress,
@@ -279,6 +279,7 @@ export async function savePaymentSettings(data: FormData) {
       validTikkieUrl = false;
     }
   }
+
   const validDate = (value: string) =>
     value === "" ||
     (/^\d{4}-\d{2}-\d{2}$/.test(value) &&
@@ -288,7 +289,7 @@ export async function savePaymentSettings(data: FormData) {
     (bitcoinEnabled && !validBitcoinAddress) ||
     (litecoinEnabled && !validLitecoinAddress) ||
     (tikkieEnabled && (!tikkieUrl || !validTikkieUrl)) ||
-    !validTikkieUrl ||
+    (!tikkieEnabled && tikkieUrl && !validTikkieUrl) ||
     !Number.isInteger(bitcoinConfirmations) ||
     bitcoinConfirmations < 1 ||
     bitcoinConfirmations > 100 ||
@@ -360,6 +361,7 @@ export async function approveStorePayment(data: FormData) {
     .select("order_id")
     .eq("id", paymentId)
     .maybeSingle();
+
   const { data: order, error: orderError } = payment
     ? await supabase
         .from("store_orders")
@@ -367,6 +369,7 @@ export async function approveStorePayment(data: FormData) {
         .eq("id", payment.order_id)
         .maybeSingle()
     : { data: null, error: null };
+
   if (paymentError || orderError) {
     console.error(
       "Payment approved, but notification details could not be loaded:",
@@ -432,6 +435,7 @@ export async function rejectStorePayment(data: FormData) {
     .select("order_id, rejection_reason")
     .eq("id", paymentId)
     .maybeSingle();
+
   const { data: order, error: orderError } = payment
     ? await supabase
         .from("store_orders")
@@ -439,6 +443,7 @@ export async function rejectStorePayment(data: FormData) {
         .eq("id", payment.order_id)
         .maybeSingle()
     : { data: null, error: null };
+
   if (paymentError || orderError) {
     console.error(
       "Payment rejected, but notification details could not be loaded:",
@@ -680,6 +685,7 @@ export async function completeManualStoreOrder(data: FormData) {
     .select("order_number, customer_email")
     .eq("id", orderId)
     .maybeSingle();
+
   if (orderError) {
     console.error(
       "Manual delivery completed, but notification details could not be loaded:",
