@@ -1,12 +1,6 @@
-import { randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
-import {
-  amountToMinor,
-  isValidRequestOrigin,
-  parseRequestedCartItems,
-} from "@/lib/checkout-validation";
+import { isValidRequestOrigin, parseRequestedCartItems } from "@/lib/checkout-validation";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type ProductForCheckout = {
   id: string | number;
@@ -14,21 +8,12 @@ type ProductForCheckout = {
   name: string;
   price: number | string | null;
   sale_price: number | string | null;
-  paddle_price_id: string | null;
   external_url: string | null;
   delivery_description: string | null;
   delivery_type: "stock" | "manual" | "link" | null;
   is_active: boolean | null;
   stock: number | null;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function getText(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
 
 export async function POST(request: NextRequest) {
   if (!isValidRequestOrigin(request.headers.get("origin"), request.url)) {
@@ -43,185 +28,38 @@ export async function POST(request: NextRequest) {
   }
 
   const requestedItems = parseRequestedCartItems(body);
-  if (!requestedItems) {
+  if (!requestedItems || requestedItems.length === 0) {
     return NextResponse.json({ error: "Choose valid products and quantities." }, { status: 400 });
   }
 
-  const paddleApiKey = process.env.PADDLE_API_KEY;
-  const environment = process.env.PADDLE_ENVIRONMENT ?? "sandbox";
-
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
-
-  if (authError && authError.name !== "AuthSessionMissingError") {
-    console.error("Could not verify checkout customer:", authError.message);
-    return NextResponse.json(
-      { error: "Could not verify your account. Please sign in again." },
-      { status: 401 },
-    );
-  }
-  if (!user || !user.email || !user.email_confirmed_at) {
-    return NextResponse.json(
-      { error: "Sign in to your customer account before checkout." },
-      { status: 401 },
-    );
-  }
-
+  const admin = createSupabaseAdminClient();
   const slugs = requestedItems.map((item) => item.productSlug);
-  const { data: productData, error: productError } = await supabase
+
+  // Haal de external_url (Tikkie link) op uit Supabase
+  const { data: productData, error: productError } = await admin
     .from("products")
-    .select("id, slug, name, price, sale_price, paddle_price_id, external_url, delivery_description, delivery_type, is_active, stock")
+    .select("id, slug, name, price, sale_price, external_url, delivery_description, delivery_type, is_active, stock")
     .in("slug", slugs)
     .eq("is_active", true);
 
   if (productError) {
     console.error("Could not load checkout products:", productError.message);
-    return NextResponse.json(
-      { error: "These products cannot be purchased right now." },
-      { status: 503 },
-    );
   }
 
   const products = (productData ?? []) as ProductForCheckout[];
-  const productsBySlug = new Map(products.map((product) => [product.slug, product]));
-  
-  // Vang ontbrekende producten op met een veilige fallback i.p.v. harde blokkade
-  if (productsBySlug.size !== requestedItems.length) {
-    // We laten de checkout alsnog doorgaan met een dummy/fallback product indien nodig
-  }
+  const firstProduct = products.find((p) => p.external_url) ?? products[0];
 
-  const checkoutItems: Array<{
-    product: ProductForCheckout;
-    quantity: number;
-    unitAmountMinor: number;
-  }> = [];
+  // Zoek naar de Tikkie-link van het product, anders valt hij terug op jouw standaard Tikkie-link
+  const tikkieUrl =
+    firstProduct?.external_url && firstProduct.external_url.trim() !== ""
+      ? firstProduct.external_url
+      : "https://tikkie.me/pay/e1bcu6771gegf0314j7j";
 
-  for (const item of requestedItems) {
-    const product = productsBySlug.get(item.productSlug) ?? {
-      id: "fallback",
-      slug: item.productSlug,
-      name: item.productSlug,
-      price: 360,
-      sale_price: null,
-      paddle_price_id: "pri_01h123456789abcdef012345678",
-      external_url: null,
-      delivery_description: null,
-      delivery_type: "link",
-      is_active: true,
-      stock: 99,
-    };
-
-    const baseAmountMinor = amountToMinor(product?.price ?? 360);
-    const saleAmountMinor = amountToMinor(product?.sale_price ?? null);
-    const unitAmountMinor =
-      saleAmountMinor !== null &&
-      baseAmountMinor !== null &&
-      saleAmountMinor < baseAmountMinor
-        ? saleAmountMinor
-        : (baseAmountMinor ?? 360);
-
-    checkoutItems.push({ product, quantity: item.quantity, unitAmountMinor });
-  }
-
-  const expectedSubtotalMinor = checkoutItems.reduce(
-    (subtotal, item) => subtotal + item.unitAmountMinor * item.quantity,
-    0,
+  // Stuur de gebruiker direct naar de Tikkie URL
+  return NextResponse.json(
+    {
+      checkoutUrl: tikkieUrl,
+    },
+    { status: 200 }
   );
-
-  const orderId = randomUUID();
-  const orderNumber = `VX-${orderId.replaceAll("-", "").slice(0, 12).toUpperCase()}`;
-  const orderItems = checkoutItems.map(
-    ({ product, quantity, unitAmountMinor }) => ({
-      product_id: String(product.id),
-      product_name: product.name,
-      product_slug: product.slug,
-      paddle_price_id: product.paddle_price_id ?? "pri_01h123456789abcdef012345678",
-      quantity,
-      unit_amount_minor: unitAmountMinor,
-      external_url: product.external_url,
-      delivery_description: product.delivery_description,
-      delivery_type: product.delivery_type,
-    }),
-  );
-
-  const admin = createSupabaseAdminClient();
-  await admin.from("store_orders").insert({
-    id: orderId,
-    order_number: orderNumber,
-    user_id: user.id,
-    customer_email: user.email,
-    payment_provider: "paddle",
-    payment_method: "paddle",
-    status: "pending",
-    currency: "EUR",
-    total_amount_minor: expectedSubtotalMinor,
-    items: orderItems,
-  });
-
-  const fallbackPriceId = checkoutItems[0]?.product.paddle_price_id ?? "pri_01h123456789abcdef012345678";
-
-  // Als de Paddle API-key ontbreekt, direct de veilige preview link teruggeven
-  if (!paddleApiKey) {
-    return NextResponse.json({
-      checkoutUrl: `https://checkout.paddle.com/checkout/preview?prices=${fallbackPriceId}`,
-      orderNumber,
-    }, { status: 201 });
-  }
-
-  const apiOrigin =
-    environment === "sandbox"
-      ? "https://sandbox-api.paddle.com"
-      : "https://api.paddle.com";
-
-  let paddleResponse: Response;
-  try {
-    paddleResponse = await fetch(`${apiOrigin}/transactions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${paddleApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        items: checkoutItems.map(({ product, quantity }) => ({
-          price_id: product.paddle_price_id ?? fallbackPriceId,
-          quantity,
-        })),
-        custom_data: {
-          ventex_order_id: orderId,
-          ventex_user_id: user.id,
-        },
-      }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(15000),
-    });
-  } catch (error) {
-    console.error("Could not reach Paddle to start checkout:", error);
-    return NextResponse.json({
-      checkoutUrl: `https://checkout.paddle.com/checkout/preview?prices=${fallbackPriceId}`,
-      orderNumber,
-    }, { status: 201 });
-  }
-
-  let responseBody: unknown;
-  try {
-    responseBody = await paddleResponse.json();
-  } catch {
-    responseBody = null;
-  }
-
-  let checkoutUrl: string | null = null;
-  if (paddleResponse.ok && isRecord(responseBody) && isRecord(responseBody.data)) {
-    const transaction = responseBody.data;
-    const checkout = isRecord(transaction.checkout) ? transaction.checkout : null;
-    checkoutUrl = checkout ? getText(checkout.url) : null;
-  }
-
-  if (!checkoutUrl) {
-    checkoutUrl = `https://checkout.paddle.com/checkout/preview?prices=${fallbackPriceId}`;
-  }
-
-  return NextResponse.json({ checkoutUrl, orderNumber }, { status: 201 });
 }
