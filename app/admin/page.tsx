@@ -25,9 +25,20 @@ import {
 } from "lucide-react";
 import { SiteFooter } from "@/components/site-footer";
 import {
+  addProductKeys,
+  approveStorePayment,
+  clearDiscordWebhook,
+  completeManualStoreOrder,
   deleteProduct,
+  deleteProductKey,
+  rejectStorePayment,
+  retryPaidOrderFulfillment,
   saveCategory,
+  saveDiscordWebhook,
+  savePaymentSettings,
   saveProduct,
+  saveStoreSettings,
+  testDiscordWebhook,
 } from "@/app/admin/actions";
 import { isVerifiedAdmin } from "@/lib/admin";
 import { formatPrice, getEffectiveProductPrice } from "@/lib/storefront";
@@ -118,29 +129,27 @@ export default async function AdminPage({
     { data: products, error: productsError },
     { data: categories, error: categoriesError },
     { data: keys, error: keysError },
-    { data: settings, error: settingsError },
+    { data: orders, error: ordersError },
+    { data: payments, error: paymentsError },
+    { data: paymentSettings },
+    { data: settings },
+    { data: discordSettings },
   ] = await Promise.all([
-    supabase.from("products").select("*").order("created_at", {
-      ascending: false,
-    }),
-    supabase
-      .from("store_categories")
-      .select("*")
-      .order("sort_order", { ascending: true }),
-    supabase
-      .from("product_keys")
-      .select("id, product_id, key_value, created_at, assigned_order_id")
-      .order("created_at", { ascending: false }),
-    supabase
-      .from("store_settings")
-      .select("*")
-      .eq("id", "default")
-      .maybeSingle(),
+    supabase.from("products").select("*").order("created_at", { ascending: false }),
+    supabase.from("store_categories").select("*").order("sort_order", { ascending: true }),
+    supabase.from("product_keys").select("id, product_id, key_value, created_at, assigned_order_id").order("created_at", { ascending: false }),
+    supabase.from("store_orders").select("*").order("created_at", { ascending: false }).limit(20),
+    supabase.from("store_payments").select("*").order("created_at", { ascending: false }).limit(20),
+    supabase.from("store_payment_settings").select("*").eq("id", "default").maybeSingle(),
+    supabase.from("store_settings").select("*").eq("id", "default").maybeSingle(),
+    supabase.from("discord_webhook_settings").select("*").eq("id", "default").maybeSingle(),
   ]);
 
   const productList = products ?? [];
   const categoryList = categories ?? [];
   const keyList = keys ?? [];
+  const orderList = orders ?? [];
+  const paymentList = payments ?? [];
   const storeSettings = settings ?? {
     maintenance_mode: false,
     maintenance_message: "We will be back shortly.",
@@ -558,6 +567,218 @@ export default async function AdminPage({
                   <Plus className="h-4 w-4" /> Add
                 </button>
               </form>
+              {categoryList.length > 0 && (
+                <div className="mt-6 space-y-2 border-t border-white/[0.07] pt-4">
+                  {categoryList.map((cat) => (
+                    <div key={cat.id} className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-black/20 p-3 text-xs">
+                      <div>
+                        <span className="font-semibold">{cat.name}</span>
+                        <span className="ml-2 text-white/40">/{cat.slug}</span>
+                      </div>
+                      <span className="text-white/40">{cat.description || "No description"}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Key Inventory Section */}
+          <section id="keys" className="scroll-mt-24 space-y-4">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">Inventory</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Key inventory</h2>
+            </div>
+            <div className={`${panelClass} p-5 sm:p-6`}>
+              <form action={addProductKeys} className="space-y-4">
+                <label className={labelClass}>Product
+                  <select className={inputClass} name="product_id" required defaultValue="">
+                    <option value="">Select product for keys</option>
+                    {productList.map((p) => (
+                      <option key={p.id} value={p.id}>{p.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className={labelClass}>Product keys (one per line)
+                  <textarea className={inputClass} name="keys" rows={4} required placeholder="KEY-XXXX-1234&#10;KEY-YYYY-5678" />
+                </label>
+                <button type="submit" className="inline-flex items-center justify-center gap-2 rounded-xl bg-white px-4 py-3 text-xs font-bold text-black transition hover:bg-white/90">
+                  <Plus className="h-4 w-4" /> Add keys
+                </button>
+              </form>
+              <div className="mt-6 border-t border-white/[0.07] pt-4">
+                <p className="text-xs font-semibold text-white/60 mb-3">Stored keys ({keyList.length})</p>
+                {keyList.length === 0 ? (
+                  <p className="text-xs text-white/35">No product keys available.</p>
+                ) : (
+                  <div className="max-h-60 overflow-y-auto space-y-1.5 pr-2">
+                    {keyList.map((k) => (
+                      <div key={k.id} className="flex items-center justify-between rounded-lg border border-white/[0.05] bg-black/30 px-3 py-2 text-xs font-mono">
+                        <span className="truncate">{k.key_value}</span>
+                        <div className="flex items-center gap-3">
+                          <span className={k.assigned_order_id ? "text-amber-400/70" : "text-emerald-400/70"}>
+                            {k.assigned_order_id ? "Assigned" : "Available"}
+                          </span>
+                          {!k.assigned_order_id && (
+                            <form action={deleteProductKey}>
+                              <input type="hidden" name="id" value={k.id} />
+                              <button type="submit" className="text-red-400 hover:text-red-300">Delete</button>
+                            </form>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* Orders Section */}
+          <section id="orders" className="scroll-mt-24 space-y-4">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">Sales</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Orders &amp; Fulfillment</h2>
+            </div>
+            <div className={`${panelClass} p-5 sm:p-6`}>
+              {orderList.length === 0 ? (
+                <p className="text-xs text-white/40">No orders received yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {orderList.map((o) => (
+                    <div key={o.id} className="rounded-xl border border-white/[0.07] bg-black/20 p-4 text-xs space-y-2">
+                      <div className="flex justify-between font-semibold">
+                        <span>Order #{o.order_number}</span>
+                        <span>{formatPrice(o.total_amount)} ({o.status})</span>
+                      </div>
+                      <p className="text-white/50">Customer: {o.customer_email}</p>
+                      {o.delivery_type === "manual" && o.status !== "completed" && (
+                        <form action={completeManualStoreOrder} className="mt-2 space-y-2">
+                          <input type="hidden" name="order_id" value={o.id} />
+                          <textarea className={inputClass} name="delivery_content" rows={2} required placeholder="Enter manual delivery details / links..." />
+                          <button type="submit" className="rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-black">Complete delivery</button>
+                        </form>
+                      )}
+                      {o.status === "paid" && o.delivery_type === "stock" && (
+                        <form action={retryPaidOrderFulfillment}>
+                          <input type="hidden" name="order_id" value={o.id} />
+                          <button type="submit" className="rounded-lg bg-white/10 px-3 py-1.5 text-xs text-white hover:bg-white/20">Retry key assignment</button>
+                        </form>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Payments Section */}
+          <section id="payments" className="scroll-mt-24 space-y-4">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">Billing</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Payments</h2>
+            </div>
+            <div className={`${panelClass} p-5 sm:p-6 space-y-6`}>
+              <div>
+                <h3 className="font-semibold text-sm mb-3">Pending Customer Payments</h3>
+                {paymentList.length === 0 ? (
+                  <p className="text-xs text-white/40">No pending payments.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {paymentList.map((p) => (
+                      <div key={p.id} className="flex items-center justify-between rounded-xl border border-white/[0.06] bg-black/30 p-3 text-xs">
+                        <div>
+                          <p className="font-semibold">{p.payment_method?.toUpperCase()} - {formatPrice(p.amount)}</p>
+                          <p className="text-white/40">Status: {p.status}</p>
+                        </div>
+                        {p.status === "pending" && (
+                          <div className="flex gap-2">
+                            <form action={approveStorePayment}>
+                              <input type="hidden" name="payment_id" value={p.id} />
+                              <button type="submit" className="rounded-lg bg-emerald-500/20 px-3 py-1.5 text-emerald-300 hover:bg-emerald-500/30 font-semibold">Approve</button>
+                            </form>
+                            <form action={rejectStorePayment}>
+                              <input type="hidden" name="payment_id" value={p.id} />
+                              <input type="hidden" name="reason" value="Payment not received" />
+                              <button type="submit" className="rounded-lg bg-red-500/20 px-3 py-1.5 text-red-300 hover:bg-red-500/30 font-semibold">Reject</button>
+                            </form>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t border-white/[0.07] pt-4">
+                <h3 className="font-semibold text-sm mb-3">Payment Settings</h3>
+                <form action={savePaymentSettings} className="grid gap-4 sm:grid-cols-2">
+                  <label className="flex items-center gap-2 text-xs text-white/70 sm:col-span-2">
+                    <input type="checkbox" name="tikkie_enabled" defaultChecked={paymentSettings?.tikkie_enabled ?? true} className="h-4 w-4 accent-white" />
+                    Enable Tikkie Payment Method
+                  </label>
+                  <label className={`${labelClass} sm:col-span-2`}>Tikkie URL
+                    <input className={inputClass} name="tikkie_url" defaultValue={paymentSettings?.tikkie_url ?? ""} placeholder="https://tikkie.me/pay/..." />
+                  </label>
+                  <label className={`${labelClass} sm:col-span-2`}>Tikkie Payment Instructions
+                    <textarea className={inputClass} name="tikkie_instructions" defaultValue={paymentSettings?.tikkie_instructions ?? ""} rows={2} />
+                  </label>
+                  <button type="submit" className="rounded-xl bg-white px-4 py-2.5 text-xs font-bold text-black sm:col-span-2">Save Payment Settings</button>
+                </form>
+              </div>
+            </div>
+          </section>
+
+          {/* Settings Section */}
+          <section id="settings" className="scroll-mt-24 space-y-4">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">Configuration</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Store settings</h2>
+            </div>
+            <div className={`${panelClass} p-5 sm:p-6`}>
+              <form action={saveStoreSettings} className="space-y-4">
+                <label className="flex items-center gap-2 text-xs text-white/70">
+                  <input type="checkbox" name="maintenance_mode" defaultChecked={storeSettings.maintenance_mode} className="h-4 w-4 accent-white" />
+                  Enable Maintenance Mode
+                </label>
+                <label className={labelClass}>Maintenance Message
+                  <input className={inputClass} name="maintenance_message" defaultValue={storeSettings.maintenance_message} />
+                </label>
+                <label className={labelClass}>Support Email
+                  <input className={inputClass} name="support_email" defaultValue={storeSettings.support_email} type="email" />
+                </label>
+                <label className={labelClass}>Discord Server URL
+                  <input className={inputClass} name="discord_server_url" defaultValue={storeSettings.discord_server_url} />
+                </label>
+                <label className={labelClass}>Discord Support URL
+                  <input className={inputClass} name="discord_support_url" defaultValue={storeSettings.discord_support_url} />
+                </label>
+                <button type="submit" className="rounded-xl bg-white px-4 py-3 text-xs font-bold text-black">Save Store Settings</button>
+              </form>
+            </div>
+          </section>
+
+          {/* Discord Webhook Section */}
+          <section id="discord" className="scroll-mt-24 space-y-4">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">Integrations</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight">Discord webhook</h2>
+            </div>
+            <div className={`${panelClass} p-5 sm:p-6 space-y-4`}>
+              <form action={saveDiscordWebhook} className="space-y-3">
+                <label className={labelClass}>Webhook URL
+                  <input className={inputClass} name="webhook_url" defaultValue={discordSettings?.webhook_url ?? ""} placeholder="https://discord.com/api/webhooks/..." required />
+                </label>
+                <button type="submit" className="rounded-xl bg-white px-4 py-2.5 text-xs font-bold text-black">Save Webhook</button>
+              </form>
+              <div className="flex gap-3 border-t border-white/[0.07] pt-4">
+                <form action={testDiscordWebhook}>
+                  <button type="submit" className="rounded-xl border border-white/10 px-4 py-2 text-xs hover:bg-white/5">Test Connection</button>
+                </form>
+                <form action={clearDiscordWebhook}>
+                  <button type="submit" className="rounded-xl border border-red-500/20 text-red-300 px-4 py-2 text-xs hover:bg-red-500/10">Clear Webhook</button>
+                </form>
+              </div>
             </div>
           </section>
 
