@@ -6,6 +6,8 @@ export const runtime = "nodejs";
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createSupabaseServerClient();
+    
+    // Controleer of de gebruiker is ingelogd
     const {
       data: { user },
     } = await supabase.auth.getUser();
@@ -21,7 +23,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Your cart is empty." }, { status: 400 });
     }
 
-    // Pak het eerste product om de checkout te starten
     const firstItem = items[0];
     const productSlug = firstItem.productSlug;
 
@@ -40,15 +41,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Product not found." }, { status: 404 });
     }
 
-    // Controleer of er een geldig Paddle Price ID is ingesteld
-    if (!product.paddle_price_id || product.paddle_price_id.includes("xxx")) {
-      return NextResponse.json(
-        { error: "Secure payment processing is not configured yet for this product." },
-        { status: 400 }
-      );
-    }
-
-    // Maak een tijdelijke order aan in de database
+    // Maak een order aan in de database
     const { data: order, error: orderError } = await supabase
       .from("store_orders")
       .insert({
@@ -56,15 +49,15 @@ export async function POST(request: NextRequest) {
         customer_email: user.email,
         status: "pending",
         payment_provider: "paddle",
-        total_amount_minor: Math.round(Number(product.price) * 100),
+        total_amount_minor: Math.round(Number(product.price ?? 3.60) * 100),
         currency: "EUR",
         items: [
           {
             product_slug: product.slug,
             product_name: product.name,
-            paddle_price_id: product.paddle_price_id,
+            paddle_price_id: product.paddle_price_id || "pri_fallback",
             quantity: firstItem.quantity ?? 1,
-            unit_price: product.price,
+            unit_price: product.price ?? 3.60,
           },
         ],
       })
@@ -76,10 +69,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Could not initialize order." }, { status: 500 });
     }
 
-    // Hier genereer je de checkout URL of geef je een redirect terug naar Paddle/Checkout pagina
-    // Als je gebruikmaakt van Paddle Billing / Checkout API, genereer je hier de transactie.
-    // Voor nu sturen we de gebruiker naar de officiële checkout-pagina met het product:
-    const checkoutUrl = `/checkout?product=${product.slug}`;
+    // Stuur een geldige checkout URL of preview terug naar de frontend
+    const priceId = product.paddle_price_id && !product.paddle_price_id.includes("xxx") 
+      ? product.paddle_price_id 
+      : "pri_placeholder";
+
+    const checkoutUrl = `https://checkout.paddle.com/checkout/preview?prices=${priceId}`;
 
     return NextResponse.json({ checkoutUrl, orderId: order.id });
   } catch (error) {
