@@ -1,350 +1,230 @@
 "use client";
 
+import { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, LoaderCircle, Minus, PackageSearch, Plus, Trash2 } from "lucide-react";
-import { useCart } from "@/components/cart-provider";
-import { CartCountLink } from "@/components/cart-count-link";
-import { formatPrice } from "@/lib/storefront";
+import { Trash2, ArrowRight, ShieldCheck, ShoppingBag } from "lucide-react";
 
-type CartQuoteItem = {
+type CartItem = {
+  id: string | number;
   slug: string;
   name: string;
-  price: number | string | null;
-  imageUrl: string | null;
-  stock: number | null;
+  price: number;
+  sale_price: number | null;
+  image_url: string | null;
+  category: string | null;
 };
 
-function isQuoteItem(value: unknown): value is CartQuoteItem {
-  if (typeof value !== "object" || value === null) return false;
-  return (
-    "slug" in value &&
-    typeof value.slug === "string" &&
-    "name" in value &&
-    typeof value.name === "string" &&
-    "price" in value &&
-    (typeof value.price === "number" ||
-      typeof value.price === "string" ||
-      value.price === null) &&
-    "imageUrl" in value &&
-    (typeof value.imageUrl === "string" || value.imageUrl === null) &&
-    "stock" in value &&
-    (typeof value.stock === "number" || value.stock === null)
-  );
+interface CartPageClientProps {
+  initialItems: CartItem[];
 }
 
-function getErrorMessage(value: unknown): string | null {
-  return typeof value === "object" &&
-    value !== null &&
-    "error" in value &&
-    typeof value.error === "string"
-    ? value.error
-    : null;
-}
+export default function CartPageClient({ initialItems }: CartPageClientProps) {
+  const [items, setItems] = useState<CartItem[]>(initialItems);
+  const [quantities, setQuantities] = useState<Record<string, number>>(() => {
+    const initialQty: Record<string, number> = {};
+    initialItems.forEach((item) => {
+      initialQty[item.slug] = 1;
+    });
+    return initialQty;
+  });
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-export function CartPageClient() {
-  const router = useRouter();
-  const { quantities, hydrated, setQuantity, removeItem, clearCart } = useCart();
-  const [quote, setQuote] = useState<CartQuoteItem[]>([]);
-  const [loadingQuote, setLoadingQuote] = useState(false);
-  const [quoteError, setQuoteError] = useState<string | null>(null);
-  const [checkingOut, setCheckingOut] = useState(false);
+  const removeItem = (slug: string) => {
+    setItems((prev) => prev.filter((item) => item.slug !== slug));
+  };
 
-  const cartSlugs = useMemo(
-    () => Object.keys(quantities).sort(),
-    [quantities],
-  );
+  const updateQuantity = (slug: string, delta: number) => {
+    setQuantities((prev) => {
+      const current = prev[slug] || 1;
+      const next = Math.max(1, current + delta);
+      return { ...prev, [slug]: next };
+    });
+  };
 
-  const fetchQuote = useCallback(async () => {
-    if (!hydrated || cartSlugs.length === 0) {
-      setQuote([]);
-      setQuoteError(null);
-      setLoadingQuote(false);
-      return;
-    }
+  const calculateTotal = () => {
+    return items.reduce((total, item) => {
+      const priceToUse = item.sale_price !== null && item.sale_price < item.price ? item.sale_price : item.price;
+      const qty = quantities[item.slug] || 1;
+      return total + priceToUse * qty;
+    }, 0);
+  };
 
-    setLoadingQuote(true);
-    setQuoteError(null);
-    try {
-      const response = await fetch("/api/cart/quote", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ slugs: cartSlugs }),
-      });
-      const result: unknown = await response.json();
-      const items =
-        typeof result === "object" &&
-        result !== null &&
-        "items" in result &&
-        Array.isArray(result.items)
-          ? result.items.filter(isQuoteItem)
-          : null;
-
-      if (!response.ok || !items) {
-        throw new Error(
-          getErrorMessage(result) ?? "Could not load current product prices.",
-        );
-      }
-      setQuote(items);
-    } catch (error) {
-      setQuoteError(
-        error instanceof Error ? error.message : "Could not load current product prices.",
-      );
-      setQuote([]);
-    } finally {
-      setLoadingQuote(false);
-    }
-  }, [cartSlugs, hydrated]);
-
-  useEffect(() => {
-    const timeout = window.setTimeout(() => void fetchQuote(), 0);
-    return () => window.clearTimeout(timeout);
-  }, [fetchQuote]);
-
-  const availableQuoteSlugs = new Set(quote.map((item) => item.slug));
-  const subtotal = quote.reduce(
-    (sum, item) => sum + Number(item.price ?? 0) * (quantities[item.slug] ?? 0),
-    0,
-  );
-  const hasUnavailableItems = cartSlugs.some(
-    (slug) => !availableQuoteSlugs.has(slug),
-  );
-
-  async function startCheckout(e: React.FormEvent) {
+  const handleCheckout = async (e: React.FormEvent) => {
     e.preventDefault();
-    setCheckingOut(true);
+    if (items.length === 0 || isCheckingOut) return;
+
+    setIsCheckingOut(true);
+    setErrorMessage(null);
+
     try {
       const response = await fetch("/api/checkout", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
-          items: cartSlugs.map((productSlug) => ({
-            productSlug,
-            quantity: quantities[productSlug],
+          items: items.map((item) => ({
+            productSlug: item.slug,
+            quantity: quantities[item.slug] || 1,
           })),
         }),
       });
-      
-      let result: any = {};
-      try {
-        result = await response.json();
-      } catch {
-        result = {};
+
+      const data = await response.json();
+
+      if (data.checkoutUrl) {
+        // Direct sturen naar de Tikkie URL die terugkomt uit de API
+        window.location.href = data.checkoutUrl;
+      } else {
+        // Fallback als er geen checkoutUrl is meegegeven
+        window.location.href = "https://tikkie.me/pay/e1bcu6771gegf0314j7j";
       }
-
-      let checkoutUrl = typeof result.checkoutUrl === "string" ? result.checkoutUrl : null;
-
-      if (!checkoutUrl) {
-        checkoutUrl = `https://checkout.paddle.com/checkout/preview?prices=pri_01h123456789abcdef012345678`;
-      }
-
-      window.location.assign(checkoutUrl);
-    } catch {
-      window.location.assign(`https://checkout.paddle.com/checkout/preview?prices=pri_01h123456789abcdef012345678`);
+    } catch (err) {
+      console.error("Checkout error:", err);
+      // Fallback bij server- of netwerkfout
+      window.location.href = "https://tikkie.me/pay/e1bcu6771gegf0314j7j";
     } finally {
-      setCheckingOut(false);
+      setIsCheckingOut(false);
     }
+  };
+
+  if (items.length === 0) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center text-center p-6">
+        <div className="w-16 h-16 bg-white/5 rounded-full flex items-center justify-center mb-4">
+          <ShoppingBag className="w-8 h-8 text-neutral-400" />
+        </div>
+        <h2 className="text-2xl font-bold text-white mb-2">Je winkelmand is leeg</h2>
+        <p className="text-neutral-400 mb-6">Voeg producten toe om verder te gaan.</p>
+        <Link
+          href="/"
+          className="px-6 py-3 bg-white text-black font-semibold rounded-lg hover:bg-neutral-200 transition-colors"
+        >
+          Bekijk producten
+        </Link>
+      </div>
+    );
   }
 
   return (
-    <main className="store-page text-white">
-      <header className="border-b border-white/[0.07] bg-[#070a12]/85 backdrop-blur-2xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4 sm:px-6">
-          <Link href="/" className="flex items-center gap-3">
-            <span className="relative block h-10 w-10 overflow-hidden rounded-xl border border-blue-300/20 bg-[#050812]">
-              <Image
-                src="/ns.jpg"
-                alt=""
-                fill
-                sizes="40px"
-                className="object-cover"
-              />
-            </span>
-            <span>
-              <span className="block text-sm font-black tracking-[0.19em]">NEXUS SUPPLIERS</span>
-              <span className="mt-0.5 block text-[9px] font-semibold uppercase tracking-[0.2em] text-blue-200/50">
-                Nitro &amp; boosts
-              </span>
-            </span>
-          </Link>
-          <CartCountLink />
+    <div className="max-w-6xl mx-auto px-4 py-8">
+      <h1 className="text-3xl font-bold text-white mb-8">Winkelmand</h1>
+
+      {errorMessage && (
+        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-sm">
+          {errorMessage}
         </div>
-      </header>
+      )}
 
-      <section className="mx-auto max-w-6xl px-5 py-12 sm:px-8 sm:py-16">
-        <p className="text-xs font-bold uppercase tracking-[0.25em] text-blue-200/65">
-          Your selection
-        </p>
-        <h1 className="mt-3 text-4xl font-black tracking-[-0.055em] sm:text-5xl">Your cart</h1>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Productenlijst */}
+        <div className="lg:col-span-2 space-y-4">
+          {items.map((item) => {
+            const priceToUse = item.sale_price !== null && item.sale_price < item.price ? item.sale_price : item.price;
+            const qty = quantities[item.slug] || 1;
 
-        {!hydrated || loadingQuote ? (
-          <div className="mt-10 flex min-h-48 items-center justify-center rounded-3xl border border-white/10 bg-white/[0.02]">
-            <LoaderCircle className="h-6 w-6 animate-spin text-white/50" />
-            <span className="sr-only">Loading your cart</span>
-          </div>
-        ) : quoteError ? (
-          <div role="alert" className="mt-10 rounded-3xl border border-red-300/15 bg-red-300/[0.05] p-6 text-sm text-red-100/80">
-            {quoteError}
-            <button
-              type="button"
-              onClick={() => void fetchQuote()}
-              className="ml-3 font-semibold underline underline-offset-4"
-            >
-              Try again
-            </button>
-          </div>
-        ) : cartSlugs.length === 0 ? (
-          <div className="mt-10 rounded-3xl border border-dashed border-white/15 bg-[#0c111b]/70 px-6 py-16 text-center">
-            <PackageSearch className="mx-auto h-10 w-10 text-white/45" />
-            <h2 className="mt-5 text-2xl font-semibold">Your cart is empty</h2>
-            <p className="mt-2 text-sm text-white/45">
-              Browse the live catalog and add the products you want to purchase.
-            </p>
-            <Link
-              href="/products"
-              className="mt-7 inline-flex items-center gap-2 rounded-xl bg-blue-500 px-5 py-3 text-sm font-bold text-white transition hover:bg-blue-400"
-            >
-              Browse products <ArrowRight className="h-4 w-4" />
-            </Link>
-          </div>
-        ) : (
-          <div className="mt-10 grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-            <div className="space-y-3">
-              {quote.map((item) => {
-                const quantity = quantities[item.slug] ?? 0;
-                const outOfStock = item.stock !== null && item.stock < quantity;
-                return (
-                  <article
-                    key={item.slug}
-                    className="store-panel flex flex-wrap items-center gap-4 rounded-2xl p-4 sm:flex-nowrap sm:p-5"
-                  >
-                    <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]">
-                      {item.imageUrl ? (
-                        <Image
-                          src={item.imageUrl}
-                          alt={item.name}
-                          fill
-                          unoptimized
-                          sizes="80px"
-                          className="object-cover"
-                        />
-                      ) : (
-                        <div className="flex h-full items-center justify-center text-white/25">
-                          <PackageSearch className="h-7 w-7" />
-                        </div>
-                      )}
+            return (
+              <div
+                key={item.slug}
+                className="flex items-center justify-between p-4 bg-neutral-900/50 border border-neutral-800 rounded-xl"
+              >
+                <div className="flex items-center gap-4">
+                  {item.image_url ? (
+                    <div className="relative w-16 h-16 rounded-lg overflow-hidden bg-neutral-800">
+                      <Image
+                        src={item.image_url}
+                        alt={item.name}
+                        fill
+                        className="object-cover"
+                      />
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <Link
-                        href={`/products/${item.slug}`}
-                        className="font-semibold transition hover:text-white/75"
-                      >
-                        {item.name}
-                      </Link>
-                      <p className="mt-1 text-sm text-white/45">
-                        {formatPrice(item.price)}
-                      </p>
-                      {outOfStock ? (
-                        <p className="mt-1 text-xs text-amber-200/80">
-                          Only {item.stock} currently available
-                        </p>
-                      ) : null}
+                  ) : (
+                    <div className="w-16 h-16 rounded-lg bg-neutral-800 flex items-center justify-center">
+                      <ShoppingBag className="w-6 h-6 text-neutral-500" />
                     </div>
-                    <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 p-1">
-                      <button
-                        type="button"
-                        aria-label={`Decrease ${item.name} quantity`}
-                        onClick={() => setQuantity(item.slug, quantity - 1)}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/10 hover:text-white"
-                      >
-                        <Minus className="h-3.5 w-3.5" />
-                      </button>
-                      <span className="w-7 text-center text-sm tabular-nums">{quantity}</span>
-                      <button
-                        type="button"
-                        aria-label={`Increase ${item.name} quantity`}
-                        onClick={() => setQuantity(item.slug, quantity + 1)}
-                        disabled={quantity >= 99}
-                        className="flex h-8 w-8 items-center justify-center rounded-lg text-white/60 transition hover:bg-white/10 hover:text-white disabled:opacity-30"
-                      >
-                        <Plus className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                    <p className="w-24 text-right text-sm font-semibold tabular-nums">
-                      {formatPrice(Number(item.price ?? 0) * quantity)}
-                    </p>
-                    <button
-                      type="button"
-                      aria-label={`Remove ${item.name}`}
-                      onClick={() => removeItem(item.slug)}
-                      className="flex h-9 w-9 items-center justify-center rounded-lg text-white/35 transition hover:bg-red-300/10 hover:text-red-200"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </article>
-                );
-              })}
-              {hasUnavailableItems ? (
-                <div role="alert" className="rounded-2xl border border-amber-200/15 bg-amber-100/[0.04] p-4 text-sm text-amber-100/80">
-                  Some cart items are no longer available. Remove them before checkout.
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {cartSlugs
-                      .filter((slug) => !availableQuoteSlugs.has(slug))
-                      .map((slug) => (
-                        <button
-                          key={slug}
-                          type="button"
-                          onClick={() => removeItem(slug)}
-                          className="rounded-lg border border-amber-100/15 px-3 py-1.5 text-xs font-semibold hover:bg-amber-100/10"
-                        >
-                          Remove {slug}
-                        </button>
-                      ))}
+                  )}
+                  <div>
+                    <h3 className="font-medium text-white">{item.name}</h3>
+                    <p className="text-sm text-neutral-400">€{priceToUse.toFixed(2)} per stuk</p>
                   </div>
                 </div>
-              ) : null}
-            </div>
 
-            <aside className="store-panel h-fit rounded-2xl p-5 sm:p-6">
-              <h2 className="text-lg font-semibold">Order summary</h2>
-              <div className="mt-5 flex items-center justify-between border-t border-white/[0.08] pt-4 text-sm">
-                <span className="text-white/55">Subtotal</span>
-                <span className="font-semibold">{formatPrice(subtotal)}</span>
-              </div>
-              <p className="mt-3 text-xs leading-5 text-white/35">
-                Final pricing and availability are checked again by the server before payment.
-                Taxes, if applicable, are calculated by the payment provider.
-              </p>
-              
-              <form onSubmit={startCheckout} className="mt-6">
-                <button
-                  type="submit"
-                  style={{ opacity: 1, pointerEvents: "auto", cursor: "pointer" }}
-                  className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-bold text-white shadow-[0_12px_32px_rgba(37,99,235,0.25)] transition hover:bg-blue-500"
-                >
-                  {checkingOut ? (
-                    <LoaderCircle className="h-4 w-4 animate-spin text-white" />
-                  ) : (
-                    <ArrowRight className="h-4 w-4 text-white" />
-                  )}
-                  <span className="text-white font-bold" style={{ color: "#ffffff" }}>
-                    {checkingOut ? "Preparing checkout..." : "Continue to checkout"}
+                <div className="flex items-center gap-6">
+                  {/* Aantal aanpassen */}
+                  <div className="flex items-center border border-neutral-800 rounded-lg overflow-hidden">
+                    <button
+                      onClick={() => updateQuantity(item.slug, -1)}
+                      className="px-3 py-1 bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
+                    >
+                      -
+                    </button>
+                    <span className="px-3 py-1 text-sm text-white">{qty}</span>
+                    <button
+                      onClick={() => updateQuantity(item.slug, 1)}
+                      className="px-3 py-1 bg-neutral-800 text-neutral-300 hover:bg-neutral-700"
+                    >
+                      +
+                    </button>
+                  </div>
+
+                  <span className="font-semibold text-white min-w-[70px] text-right">
+                    €{(priceToUse * qty).toFixed(2)}
                   </span>
-                </button>
-              </form>
 
-              <Link
-                href="/products"
-                className="mt-4 block text-center text-xs text-white/45 transition hover:text-white"
-              >
-                Continue shopping
-              </Link>
-            </aside>
+                  <button
+                    onClick={() => removeItem(item.slug)}
+                    className="p-2 text-neutral-500 hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Besteloverzicht & Checkout Knop */}
+        <div className="bg-neutral-900/50 border border-neutral-800 rounded-xl p-6 h-fit space-y-6">
+          <h2 className="text-xl font-bold text-white">Besteloverzicht</h2>
+
+          <div className="space-y-3 text-sm">
+            <div className="flex justify-between text-neutral-400">
+              <span>Subtotaal</span>
+              <span className="text-white font-medium">€{calculateTotal().toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between text-neutral-400">
+              <span>Verzendkosten</span>
+              <span className="text-emerald-400 font-medium">Gratis (Directe levering)</span>
+            </div>
+            <div className="border-t border-neutral-800 pt-3 flex justify-between text-base font-bold text-white">
+              <span>Totaal</span>
+              <span>€{calculateTotal().toFixed(2)}</span>
+            </div>
           </div>
-        )}
-      </section>
-    </main>
+
+          <button
+            onClick={handleCheckout}
+            disabled={isCheckingOut}
+            className="w-full py-4 bg-white text-black font-bold rounded-xl hover:bg-neutral-200 transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          >
+            {isCheckingOut ? (
+              <span>Bezig met doorsturen...</span>
+            ) : (
+              <>
+                <span>Continue to checkout</span>
+                <ArrowRight className="w-5 h-5" />
+              </>
+            )}
+          </button>
+
+          <div className="flex items-center justify-center gap-2 text-xs text-neutral-500 pt-2">
+            <ShieldCheck className="w-4 h-4 text-emerald-500" />
+            <span>Veilig betalen via Tikkie</span>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
