@@ -9,9 +9,7 @@ import {
   Check,
   CircleAlert,
   ClipboardList,
-  ExternalLink,
   Gift,
-  Globe2,
   KeyRound,
   Layers3,
   LifeBuoy,
@@ -24,24 +22,12 @@ import {
   ShieldCheck,
   Store,
   Wallet,
-  Wrench,
 } from "lucide-react";
 import { SiteFooter } from "@/components/site-footer";
 import {
-  addProductKeys,
-  approveStorePayment,
-  clearDiscordWebhook,
-  completeManualStoreOrder,
   deleteProduct,
-  deleteProductKey,
-  rejectStorePayment,
-  retryPaidOrderFulfillment,
   saveCategory,
-  saveDiscordWebhook,
   saveProduct,
-  savePaymentSettings,
-  saveStoreSettings,
-  testDiscordWebhook,
 } from "@/app/admin/actions";
 import { isVerifiedAdmin } from "@/lib/admin";
 import { formatPrice, getEffectiveProductPrice } from "@/lib/storefront";
@@ -86,17 +72,7 @@ function Notice({
 
   const message =
     kind === "error"
-      ? value === "manual-delivery"
-        ? "Manual delivery could not be saved. Confirm the order is processing and enter delivery details."
-        : value === "payments"
-          ? "Payment settings could not be saved. Check the addresses, URLs, and reminder fields."
-          : value === "payment"
-            ? "The payment action could not be completed. It may no longer be awaiting review."
-            : value === "product-has-stock"
-              ? "Remove this product's inventory before deleting it."
-              : value === "product-in-orders"
-                ? "This product is part of an order and cannot be deleted. Deactivate it instead."
-                : `Supabase Error / Failed: ${value}`
+      ? decodeURIComponent(value)
       : messages[value] || value;
 
   if (!message) return null;
@@ -142,11 +118,7 @@ export default async function AdminPage({
     { data: products, error: productsError },
     { data: categories, error: categoriesError },
     { data: keys, error: keysError },
-    { data: orders, error: ordersError },
     { data: settings, error: settingsError },
-    { data: webhook, error: webhookError },
-    { data: paymentSettingsData, error: paymentSettingsError },
-    { data: payments, error: paymentsError },
   ] = await Promise.all([
     supabase.from("products").select("*").order("created_at", {
       ascending: false,
@@ -160,38 +132,15 @@ export default async function AdminPage({
       .select("id, product_id, key_value, created_at, assigned_order_id")
       .order("created_at", { ascending: false }),
     supabase
-      .from("store_orders")
-      .select(
-      "id, order_number, status, payment_method, customer_email, currency, total_amount_minor, items, manual_delivery, created_at",
-      )
-      .order("created_at", { ascending: false })
-      .limit(50),
-    supabase
       .from("store_settings")
       .select("*")
       .eq("id", "default")
       .maybeSingle(),
-    supabase
-      .from("discord_webhook_settings")
-      .select("id")
-      .eq("id", "default")
-      .maybeSingle(),
-    supabase
-      .from("store_payment_settings")
-      .select("*")
-      .eq("id", "default")
-      .maybeSingle(),
-    supabase
-      .from("store_payments")
-      .select("id, order_id, provider, status, transaction_id, expected_amount, received_amount, confirmations, detected_at, expires_at")
-      .order("created_at", { ascending: false })
-      .limit(50),
   ]);
 
   const productList = products ?? [];
   const categoryList = categories ?? [];
   const keyList = keys ?? [];
-  const orderList = orders ?? [];
   const storeSettings = settings ?? {
     maintenance_mode: false,
     maintenance_message: "We will be back shortly.",
@@ -199,36 +148,7 @@ export default async function AdminPage({
     discord_support_url: "",
     support_email: "",
   };
-  const paymentSettings = paymentSettingsData ?? {
-    bitcoin_enabled: false,
-    bitcoin_address: "",
-    bitcoin_confirmations: 2,
-    litecoin_enabled: false,
-    litecoin_address: "",
-    litecoin_confirmations: 6,
-    tikkie_enabled: false,
-    tikkie_url: "",
-    tikkie_instructions: "",
-    payment_timeout_minutes: 60,
-    tikkie_reset_date: "",
-    tikkie_reminder_date: "",
-    tikkie_reminder_email: "",
-    tikkie_reminder_enabled: false,
-  };
-  const paymentList = payments ?? [];
-  const dataErrors = [
-    productsError,
-    categoriesError,
-    keysError,
-    ordersError,
-    settingsError,
-    webhookError,
-    paymentSettingsError,
-    paymentsError,
-  ].filter(Boolean);
-  const migrationMissing = dataErrors.some(
-    (item) => item?.code === "PGRST205" || item?.code === "42P01",
-  );
+
   const formattedDate = new Intl.DateTimeFormat("en-US", {
     weekday: "long",
     month: "long",
@@ -346,16 +266,6 @@ export default async function AdminPage({
               Rewards
             </Link>
           </nav>
-          <div className="mt-8 hidden rounded-2xl border border-white/[0.07] bg-white/[0.02] p-4 lg:block">
-            <ShieldCheck className="h-4 w-4 text-white/45" />
-            <p className="mt-3 text-xs font-semibold text-white/75">
-              Private workspace
-            </p>
-            <p className="mt-1 text-[11px] leading-5 text-white/35">
-              Store settings and inventory are restricted to verified Nexus Suppliers
-              administrators.
-            </p>
-          </div>
         </aside>
 
         <div className="min-w-0 space-y-8">
@@ -369,10 +279,6 @@ export default async function AdminPage({
                   <h1 className="mt-4 text-4xl font-semibold tracking-[-0.05em] sm:text-5xl">
                     Good to see you.
                   </h1>
-                  <p className="mt-3 text-sm text-white/45">
-                    Your catalog, community, and store controls in one quiet
-                    corner.
-                  </p>
                 </div>
                 <div
                   className={`inline-flex w-fit items-center gap-2 rounded-full border px-3.5 py-2 text-xs ${
@@ -430,12 +336,7 @@ export default async function AdminPage({
           <Notice value={query.notice} kind="notice" />
           <Notice value={query.error} kind="error" />
 
-          {productsError && !migrationMissing ? (
-            <div role="alert" className="rounded-2xl border border-red-300/15 bg-red-300/[0.05] p-4 text-sm text-red-100/80">
-              Could not load catalog: {productsError.message}
-            </div>
-          ) : null}
-
+          {/* Products Section */}
           <section id="products" className="scroll-mt-24 space-y-4">
             <div className="flex items-end justify-between gap-3">
               <div>
@@ -457,9 +358,6 @@ export default async function AdminPage({
 
             <div id="new-product" className={`${panelClass} scroll-mt-24 p-5 sm:p-6`}>
               <h3 className="font-semibold">Create a product</h3>
-              <p className="mt-1 text-xs text-white/40">
-                Listings are saved directly to your existing Supabase catalog.
-              </p>
               <form action={saveProduct} className="mt-5 grid gap-4 sm:grid-cols-2">
                 <label className={labelClass}>
                   Product name
@@ -537,7 +435,6 @@ export default async function AdminPage({
               <div className={`${panelClass} px-6 py-12 text-center`}>
                 <PackageOpen className="mx-auto h-7 w-7 text-white/40" />
                 <p className="mt-3 font-medium">Your catalog is waiting.</p>
-                <p className="mt-1 text-xs text-white/40">Create your first product above.</p>
               </div>
             ) : (
               <div className="space-y-3">
@@ -559,13 +456,10 @@ export default async function AdminPage({
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="truncate text-sm font-semibold">{product.name}</p>
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] ${product.is_active ? "bg-emerald-300/[0.08] text-emerald-100/70" : "bg-white/[0.05] text-white/35"}`}>
-                            {product.is_active ? "Published" : "Draft"}
-                          </span>
-                        </div>
-                        <p className="mt-1 truncate text-xs text-white/40">{product.category ?? "Uncategorized"} · /products/{product.slug}</p>
+                        <p className="truncate text-sm font-semibold">{product.name}</p>
+                        <p className="text-xs text-white/45">
+                          {product.category || "Uncategorized"} · /products/{product.slug} · {product.is_active ? "Published" : "Draft"}
+                        </p>
                       </div>
                       <span className="hidden text-sm font-semibold sm:block">{formatPrice(getEffectiveProductPrice(product))}</span>
                       <ArrowDownRight className="h-4 w-4 shrink-0 text-white/35 transition group-open:rotate-180" />
@@ -580,15 +474,23 @@ export default async function AdminPage({
                           <input className={inputClass} name="slug" defaultValue={product.slug ?? ""} maxLength={160} required />
                         </label>
                         <label className={labelClass}>Price (EUR)
-                          <input className={inputClass} name="price" type="number" min="0" step="0.01" defaultValue={product.price ?? ""} required />
+                          <input className={inputClass} name="price" type="number" min="0" step="0.01" defaultValue={product.price ?? 0} required />
                         </label>
-                        <label className={labelClass}>Sale price (optional, EUR)
+                        <label className={labelClass}>Sale price (EUR)
                           <input className={inputClass} name="sale_price" type="number" min="0" step="0.01" defaultValue={product.sale_price ?? ""} />
                         </label>
                         <label className={labelClass}>Paddle price ID
-                          <input className={inputClass} name="paddle_price_id" defaultValue={product.paddle_price_id ?? ""} maxLength={40} placeholder="pri_..." />
+                          <input className={inputClass} name="paddle_price_id" defaultValue={product.paddle_price_id ?? ""} maxLength={40} />
                         </label>
-                        <label className={labelClass}>Available stock (blank = not capped)
+                        <label className={labelClass}>Category
+                          <select className={inputClass} name="category" defaultValue={product.category ?? ""}>
+                            <option value="">Choose a category</option>
+                            {categoryList.map((category) => (
+                              <option key={category.id} value={category.name}>{category.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className={labelClass}>Available stock
                           <input className={inputClass} name="stock" type="number" min="0" step="1" defaultValue={product.stock ?? ""} />
                         </label>
                         <label className={labelClass}>Delivery type
@@ -598,24 +500,13 @@ export default async function AdminPage({
                             <option value="link">Access link</option>
                           </select>
                         </label>
-                        <label className={labelClass}>Category
-                          <select className={inputClass} name="category" defaultValue={product.category ?? ""}>
-                            <option value="">Uncategorized</option>
-                            {categoryList.map((category) => (
-                              <option key={category.id} value={category.name}>{category.name}</option>
-                            ))}
-                            {product.category && !categoryList.some((category) => category.name === product.category) ? (
-                              <option value={product.category}>{product.category} (existing)</option>
-                            ) : null}
-                          </select>
-                        </label>
                         <label className={`${labelClass} sm:col-span-2`}>Short description
                           <textarea className={inputClass} name="short_description" defaultValue={product.short_description ?? ""} maxLength={300} rows={2} />
                         </label>
                         <label className={`${labelClass} sm:col-span-2`}>Full description
                           <textarea className={inputClass} name="description" defaultValue={product.description ?? ""} maxLength={4000} rows={4} required />
                         </label>
-                        <label className={labelClass}>Image URL
+                        <label className={labelClass}>Product image URL
                           <input className={inputClass} name="image_url" type="url" defaultValue={product.image_url ?? ""} />
                         </label>
                         <label className={labelClass}>Destination / access URL
@@ -625,8 +516,8 @@ export default async function AdminPage({
                           <textarea className={inputClass} name="delivery_description" defaultValue={product.delivery_description ?? ""} maxLength={4000} rows={3} />
                         </label>
                         <label className="flex items-center gap-2 text-xs text-white/55 sm:col-span-2">
-                          <input type="checkbox" name="is_active" defaultChecked={product.is_active ?? false} className="h-4 w-4 accent-white" />
-                          Published in the storefront
+                          <input type="checkbox" name="is_active" defaultChecked={product.is_active ?? true} className="h-4 w-4 accent-white" />
+                          Publish this product immediately
                         </label>
                         <button type="submit" className="rounded-xl bg-white px-4 py-3 text-sm font-bold text-black transition hover:bg-white/90 sm:col-span-2">
                           Save product changes
@@ -635,7 +526,7 @@ export default async function AdminPage({
                       <form action={deleteProduct} className="mt-3">
                         <input type="hidden" name="id" value={product.id} />
                         <button type="submit" className="w-full rounded-xl border border-red-200/15 px-4 py-2.5 text-xs font-semibold text-red-100/70 transition hover:border-red-200/30 hover:bg-red-200/[0.04] hover:text-red-100">
-                          Delete product (only if it has no inventory or order history)
+                          Delete product
                         </button>
                       </form>
                     </div>
@@ -645,6 +536,7 @@ export default async function AdminPage({
             )}
           </section>
 
+          {/* Categories Section */}
           <section id="categories" className="scroll-mt-24 space-y-4">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-white/35">Organize</p>
@@ -668,6 +560,7 @@ export default async function AdminPage({
               </form>
             </div>
           </section>
+
         </div>
       </div>
       <SiteFooter />
