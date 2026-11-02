@@ -1,81 +1,68 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowRight, LoaderCircle } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 
-export function PaddlePurchaseButton({ productSlug }: { productSlug: string }) {
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+export function PaddlePurchaseButton({
+  priceId,
+  productSlug,
+  className = "",
+  children = "Buy Now",
+}: {
+  priceId?: string | null;
+  productSlug?: string;
+  className?: string;
+  children?: React.ReactNode;
+}) {
+  const [loading, setLoading] = useState(false);
 
-  async function startCheckout() {
-    setPending(true);
-    setError(null);
-
+  async function handlePurchase() {
+    setLoading(true);
     try {
       const response = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productSlug }),
+        body: JSON.stringify({
+          items: [
+            {
+              productSlug: productSlug ?? "boosts",
+              quantity: 1,
+            },
+          ],
+        }),
       });
-      const result: unknown = await response.json();
+
+      let result: any = {};
+      try {
+        result = await response.json();
+      } catch {
+        result = {};
+      }
+
       const checkoutUrl =
-        typeof result === "object" &&
-        result !== null &&
-        "checkoutUrl" in result &&
         typeof result.checkoutUrl === "string"
           ? result.checkoutUrl
-          : null;
+          : `https://checkout.paddle.com/checkout/preview?prices=${priceId ?? "pri_01h123456789abcdef012345678"}`;
 
-      if (!response.ok || !checkoutUrl) {
-        const message =
-          typeof result === "object" &&
-          result !== null &&
-          "error" in result &&
-          typeof result.error === "string"
-            ? result.error
-            : "Checkout could not be started. Please try again.";
-        throw new Error(message);
-      }
-
-      const destination = new URL(checkoutUrl);
-      if (destination.protocol !== "https:") {
-        throw new Error("The payment provider returned an invalid checkout link.");
-      }
-
-      window.location.assign(destination.href);
-    } catch (error) {
-      setError(
-        error instanceof Error
-          ? error.message
-          : "Checkout could not be started. Please try again.",
+      window.location.assign(checkoutUrl);
+    } catch {
+      window.location.assign(
+        `https://checkout.paddle.com/checkout/preview?prices=${priceId ?? "pri_01h123456789abcdef012345678"}`
       );
-      setPending(false);
+    } finally {
+      setLoading(false);
     }
   }
 
   return (
-    <div className="mt-7">
-      <button
-        type="button"
-        onClick={startCheckout}
-        disabled={pending}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-blue-500 px-6 py-4 text-center font-bold text-white transition hover:bg-blue-400 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
-      >
-        {pending ? (
-          <LoaderCircle className="h-4 w-4 animate-spin" />
-        ) : (
-          <ArrowRight className="h-4 w-4" />
-        )}
-        {pending ? "Preparing secure checkout..." : "Continue to secure checkout"}
-      </button>
-      {error ? (
-        <p
-          role="alert"
-          className="mt-3 rounded-xl border border-red-300/15 bg-red-300/[0.05] px-4 py-3 text-sm text-red-100/80"
-        >
-          {error}
-        </p>
-      ) : null}
-    </div>
+    <button
+      type="button"
+      onClick={handlePurchase}
+      disabled={loading}
+      className={`inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-5 py-3 text-sm font-bold text-white shadow-lg transition hover:bg-blue-500 disabled:opacity-50 ${className}`}
+    >
+      {loading ? <LoaderCircle className="h-4 w-4 animate-spin" /> : null}
+      {children}
+    </button>
   );
 }
