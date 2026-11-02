@@ -352,6 +352,7 @@ export function CartPageClient() {
               <button
                 type="button"
                 onClick={startCheckout}
+                style={{ opacity: 1, pointerEvents: "auto" }}
                 className="mt-6 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-bold text-white shadow-[0_12px_32px_rgba(37,99,235,0.25)] transition hover:bg-blue-500"
               >
                 {checkingOut ? (
@@ -359,7 +360,7 @@ export function CartPageClient() {
                 ) : (
                   <ArrowRight className="h-4 w-4 text-white" />
                 )}
-                <span className="text-white">
+                <span className="text-white font-bold">
                   {checkingOut ? "Preparing checkout..." : "Continue to checkout"}
                 </span>
               </button>
