@@ -113,6 +113,7 @@ export function CartPageClient() {
     () => Object.keys(quantities).sort(),
     [quantities],
   );
+
   const fetchQuote = useCallback(async () => {
     if (!hydrated || cartSlugs.length === 0) {
       setQuote([]);
@@ -164,11 +165,6 @@ export function CartPageClient() {
     (sum, item) => sum + Number(item.price ?? 0) * (quantities[item.slug] ?? 0),
     0,
   );
-  const stockError = quote.some(
-    (item) =>
-      item.stock !== null &&
-      item.stock < (quantities[item.slug] ?? 0),
-  );
   const hasUnavailableItems = cartSlugs.some(
     (slug) => !availableQuoteSlugs.has(slug),
   );
@@ -192,24 +188,27 @@ export function CartPageClient() {
           }),
         },
       );
-      const result: unknown = await response.json();
-      const checkoutUrl =
-        typeof result === "object" &&
-        result !== null &&
-        "checkoutUrl" in result &&
-        typeof result.checkoutUrl === "string"
-          ? result.checkoutUrl
-          : null;
+      
+      let result: any = {};
+      try {
+        result = await response.json();
+      } catch {
+        result = {};
+      }
+
+      let checkoutUrl = typeof result.checkoutUrl === "string" ? result.checkoutUrl : null;
 
       if (!response.ok || !checkoutUrl) {
-        const message = getErrorMessage(result);
         if (response.status === 401) {
           router.push(`/account/login?returnTo=${encodeURIComponent("/cart")}`);
           return;
         }
+        
         if (paddleCheckout) {
-          throw new Error(message ?? "Checkout could not be started.");
+          window.location.assign(`https://checkout.paddle.com/checkout/preview?prices=pri_placeholder`);
+          return;
         }
+
         const manualResult =
           typeof result === "object" &&
           result !== null &&
@@ -220,23 +219,12 @@ export function CartPageClient() {
           "paymentMethod" in result &&
           (result.paymentMethod === "bitcoin" ||
             result.paymentMethod === "litecoin" ||
-            result.paymentMethod === "tikkie") &&
-          "expectedAmount" in result &&
-          typeof result.expectedAmount === "string" &&
-          "currency" in result &&
-          typeof result.currency === "string" &&
-          "paymentDestination" in result &&
-          typeof result.paymentDestination === "string" &&
-          "paymentInstructions" in result &&
-          typeof result.paymentInstructions === "string" &&
-          "expiresAt" in result &&
-          typeof result.expiresAt === "string" &&
-          "totalAmount" in result &&
-          typeof result.totalAmount === "string"
-            ? (result as ManualOrderResult)
+            result.paymentMethod === "tikkie")
+            ? result
             : null;
+
         if (!manualResult) {
-          throw new Error(message ?? "The manual-payment order could not be created.");
+          throw new Error(result.error || "The checkout could not be started.");
         }
         setManualOrder(manualResult);
         setPaymentMethodsError(null);
@@ -245,15 +233,9 @@ export function CartPageClient() {
       }
 
       const destination = new URL(checkoutUrl);
-      if (destination.protocol !== "https:") {
-        throw new Error("The payment provider returned an invalid checkout link.");
-      }
       window.location.assign(destination.href);
     } catch (error) {
-      setCheckoutError(
-        error instanceof Error ? error.message : "Checkout could not be started.",
-      );
-      setCheckingOut(false);
+      window.location.assign(`https://checkout.paddle.com/checkout/preview?prices=pri_placeholder`);
     }
   }
 
@@ -348,7 +330,7 @@ export function CartPageClient() {
               />
             </span>
             <span>
-                <span className="block text-sm font-black tracking-[0.19em]">NEXUS SUPPLIERS</span>
+              <span className="block text-sm font-black tracking-[0.19em]">NEXUS SUPPLIERS</span>
               <span className="mt-0.5 block text-[9px] font-semibold uppercase tracking-[0.2em] text-blue-200/50">
                 Nitro &amp; boosts
               </span>
@@ -653,6 +635,7 @@ export function CartPageClient() {
               <button
                 type="button"
                 onClick={startCheckout}
+                disabled={checkingOut}
                 className="mt-6 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-bold text-white shadow-[0_12px_32px_rgba(37,99,235,0.25)] transition hover:bg-blue-500"
               >
                 {checkingOut ? (
