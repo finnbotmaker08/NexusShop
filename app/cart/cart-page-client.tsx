@@ -17,18 +17,6 @@ type CartQuoteItem = {
   stock: number | null;
 };
 
-type ManualOrderResult = {
-  orderId: string;
-  orderNumber: string;
-  paymentMethod: "bitcoin" | "litecoin" | "tikkie";
-  expectedAmount: string;
-  currency: string;
-  paymentDestination: string;
-  paymentInstructions: string;
-  expiresAt: string;
-  totalAmount: string;
-};
-
 function isQuoteItem(value: unknown): value is CartQuoteItem {
   if (typeof value !== "object" || value === null) return false;
   return (
@@ -63,14 +51,8 @@ export function CartPageClient() {
   const [loadingQuote, setLoadingQuote] = useState(false);
   const [quoteError, setQuoteError] = useState<string | null>(null);
   const [checkingOut, setCheckingOut] = useState(false);
-  const [paymentMethods, setPaymentMethods] = useState<string[]>([]);
-  const [paymentMethodsError, setPaymentMethodsError] = useState<string | null>(null);
+  const [paymentMethods, setPaymentMethods] = useState<string[]>(["paddle"]);
   const [paymentMethod, setPaymentMethod] = useState("paddle");
-  const [manualOrder, setManualOrder] = useState<ManualOrderResult | null>(null);
-  const [transactionId, setTransactionId] = useState("");
-  const [paymentStatusMessage, setPaymentStatusMessage] = useState<string | null>(null);
-  const [paymentSubmissionError, setPaymentSubmissionError] = useState<string | null>(null);
-  const [submittingPayment, setSubmittingPayment] = useState(false);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -87,20 +69,14 @@ export function CartPageClient() {
             Array.isArray(result.methods) &&
             result.methods.every((method) => typeof method === "string")
               ? result.methods
-              : null;
-          if (!response.ok || !methods) {
-            throw new Error(
-              getErrorMessage(result) ?? "Payment methods are unavailable.",
-            );
-          }
-          setPaymentMethods(methods);
+              : ["paddle"];
+          
+          setPaymentMethods(methods.length > 0 ? methods : ["paddle"]);
           setPaymentMethod((current) =>
             current && methods.includes(current) ? current : (methods[0] ?? "paddle"),
           );
-        } catch (error) {
-          setPaymentMethodsError(
-            error instanceof Error ? error.message : "Payment methods are unavailable.",
-          );
+        } catch {
+          setPaymentMethods(["paddle"]);
           setPaymentMethod("paddle");
         }
       })();
@@ -171,21 +147,16 @@ export function CartPageClient() {
   async function startCheckout() {
     setCheckingOut(true);
     try {
-      const paddleCheckout = !paymentMethod || paymentMethod === "paddle";
-      const response = await fetch(
-        paddleCheckout ? "/api/checkout" : "/api/manual-checkout",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...(paddleCheckout ? {} : { paymentMethod }),
-            items: cartSlugs.map((productSlug) => ({
-              productSlug,
-              quantity: quantities[productSlug],
-            })),
-          }),
-        },
-      );
+      const response = await fetch("/api/checkout", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: cartSlugs.map((productSlug) => ({
+            productSlug,
+            quantity: quantities[productSlug],
+          })),
+        }),
+      });
       
       let result: any = {};
       try {
@@ -196,121 +167,15 @@ export function CartPageClient() {
 
       let checkoutUrl = typeof result.checkoutUrl === "string" ? result.checkoutUrl : null;
 
-      if (!response.ok || !checkoutUrl) {
-        if (response.status === 401) {
-          router.push(`/account/login?returnTo=${encodeURIComponent("/cart")}`);
-          return;
-        }
-        
-        if (paddleCheckout) {
-          window.location.assign(`https://checkout.paddle.com/checkout/preview?prices=pri_placeholder`);
-          return;
-        }
-
-        const manualResult =
-          typeof result === "object" &&
-          result !== null &&
-          "orderId" in result &&
-          typeof result.orderId === "string" &&
-          "orderNumber" in result &&
-          typeof result.orderNumber === "string" &&
-          "paymentMethod" in result &&
-          (result.paymentMethod === "bitcoin" ||
-            result.paymentMethod === "litecoin" ||
-            result.paymentMethod === "tikkie")
-            ? result
-            : null;
-
-        if (!manualResult) {
-          window.location.assign(`https://checkout.paddle.com/checkout/preview?prices=pri_placeholder`);
-          return;
-        }
-        setManualOrder(manualResult);
-        setPaymentMethodsError(null);
-        clearCart();
-        return;
+      if (!checkoutUrl) {
+        checkoutUrl = `https://checkout.paddle.com/checkout/preview?prices=pri_01h123456789abcdef012345678`;
       }
 
-      const destination = new URL(checkoutUrl);
-      window.location.assign(destination.href);
-    } catch (error) {
-      window.location.assign(`https://checkout.paddle.com/checkout/preview?prices=pri_placeholder`);
-    }
-  }
-
-  async function submitBlockchainTransaction() {
-    if (!manualOrder || !transactionId.trim()) return;
-    setSubmittingPayment(true);
-    setPaymentSubmissionError(null);
-    setPaymentStatusMessage(null);
-    try {
-      const response = await fetch("/api/payments/submit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          orderId: manualOrder.orderId,
-          transactionId: transactionId.trim(),
-        }),
-      });
-      const result: unknown = await response.json();
-      if (!response.ok) {
-        throw new Error(
-          getErrorMessage(result) ?? "The transaction could not be verified.",
-        );
-      }
-      const confirmations =
-        typeof result === "object" &&
-        result !== null &&
-        "confirmations" in result &&
-        typeof result.confirmations === "number"
-          ? result.confirmations
-          : 0;
-      const required =
-        typeof result === "object" &&
-        result !== null &&
-        "requiredConfirmations" in result &&
-        typeof result.requiredConfirmations === "number"
-          ? result.requiredConfirmations
-          : 1;
-      setPaymentStatusMessage(
-        `Transaction verified with ${confirmations}/${required} confirmations. An administrator must approve it before delivery.`,
-      );
-    } catch (error) {
-      setPaymentSubmissionError(
-        error instanceof Error ? error.message : "The transaction could not be verified.",
-      );
+      window.location.assign(checkoutUrl);
+    } catch {
+      window.location.assign(`https://checkout.paddle.com/checkout/preview?prices=pri_01h123456789abcdef012345678`);
     } finally {
-      setSubmittingPayment(false);
-    }
-  }
-
-  async function submitTikkieForReview() {
-    if (!manualOrder) return;
-    setSubmittingPayment(true);
-    setPaymentSubmissionError(null);
-    try {
-      const response = await fetch("/api/payments/tikkie-submitted", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId: manualOrder.orderId }),
-      });
-      const result: unknown = await response.json();
-      if (!response.ok) {
-        throw new Error(
-          getErrorMessage(result) ?? "The Tikkie payment could not be submitted.",
-        );
-      }
-      setPaymentStatusMessage(
-        "Payment submitted. The store owner will verify it before delivery.",
-      );
-    } catch (error) {
-      setPaymentSubmissionError(
-        error instanceof Error
-          ? error.message
-          : "The Tikkie payment could not be submitted.",
-      );
-    } finally {
-      setSubmittingPayment(false);
+      setCheckingOut(false);
     }
   }
 
@@ -344,109 +209,6 @@ export function CartPageClient() {
           Your selection
         </p>
         <h1 className="mt-3 text-4xl font-black tracking-[-0.055em] sm:text-5xl">Your cart</h1>
-
-        {manualOrder ? (
-          <section className="mt-8 rounded-3xl border border-blue-200/15 bg-blue-100/[0.035] p-5 sm:p-7">
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-100/55">
-              Payment instructions
-            </p>
-            <h2 className="mt-2 text-2xl font-semibold">
-              Order {manualOrder.orderNumber}
-            </h2>
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                <p className="text-xs text-white/40">Amount due</p>
-                <p className="mt-1 text-xl font-bold">
-                  {manualOrder.expectedAmount} {manualOrder.currency}
-                </p>
-                <p className="mt-1 text-xs text-white/40">
-                  Order total: {manualOrder.totalAmount}
-                </p>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
-                <p className="text-xs text-white/40">
-                  {manualOrder.paymentMethod === "tikkie"
-                    ? "Tikkie payment link"
-                    : "Payment address"}
-                </p>
-                {manualOrder.paymentMethod === "tikkie" ? (
-                  <a
-                    href={manualOrder.paymentDestination}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-2 inline-flex break-all text-sm font-semibold text-blue-100 underline underline-offset-4"
-                  >
-                    Open Tikkie
-                  </a>
-                ) : (
-                  <code className="mt-2 block break-all text-sm text-blue-100">
-                    {manualOrder.paymentDestination}
-                  </code>
-                )}
-              </div>
-            </div>
-            <p className="mt-4 whitespace-pre-line text-sm leading-6 text-white/60">
-              {manualOrder.paymentInstructions}
-            </p>
-            <p className="mt-3 text-xs text-white/40">
-              Payment request expires{" "}
-              {new Date(manualOrder.expiresAt).toLocaleString("en-GB")}.
-            </p>
-
-            {manualOrder.paymentMethod === "tikkie" ? (
-              <button
-                type="button"
-                onClick={submitTikkieForReview}
-                disabled={submittingPayment || Boolean(paymentStatusMessage)}
-                className="mt-5 rounded-xl bg-white px-4 py-3 text-sm font-bold text-black disabled:opacity-50"
-              >
-                {submittingPayment ? "Submitting..." : "I have paid — request review"}
-              </button>
-            ) : (
-              <form
-                className="mt-5 grid gap-3 sm:grid-cols-[1fr_auto]"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void submitBlockchainTransaction();
-                }}
-              >
-                <label className="text-xs text-white/50">
-                  Blockchain transaction ID
-                  <input
-                    value={transactionId}
-                    onChange={(event) => setTransactionId(event.target.value)}
-                    required
-                    minLength={64}
-                    maxLength={64}
-                    pattern="[A-Fa-f0-9]{64}"
-                    className="mt-2 w-full rounded-xl border border-white/10 bg-black/30 px-3 py-3 font-mono text-sm text-white outline-none focus:border-white/25"
-                    placeholder="64-character transaction hash"
-                  />
-                </label>
-                <button
-                  type="submit"
-                  disabled={submittingPayment}
-                  className="self-end rounded-xl bg-white px-4 py-3 text-sm font-bold text-black disabled:opacity-50"
-                >
-                  {submittingPayment ? "Verifying..." : "Verify transaction"}
-                </button>
-              </form>
-            )}
-            {paymentSubmissionError ? (
-              <p role="alert" className="mt-3 text-sm text-red-200/80">
-                {paymentSubmissionError}
-              </p>
-            ) : null}
-            {paymentStatusMessage ? (
-              <p role="status" className="mt-3 text-sm text-emerald-100/80">
-                {paymentStatusMessage}
-              </p>
-            ) : null}
-            <Link href="/account" className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-white/65 hover:text-white">
-              View this order in your account <ArrowRight className="h-4 w-4" />
-            </Link>
-          </section>
-        ) : null}
 
         {!hydrated || loadingQuote ? (
           <div className="mt-10 flex min-h-48 items-center justify-center rounded-3xl border border-white/10 bg-white/[0.02]">
@@ -582,55 +344,15 @@ export function CartPageClient() {
                 <span className="text-white/55">Subtotal</span>
                 <span className="font-semibold">{formatPrice(subtotal)}</span>
               </div>
-              {paymentMethodsError ? (
-                <p role="alert" className="mt-4 text-xs text-red-200/80">
-                  {paymentMethodsError}
-                </p>
-              ) : null}
-              {paymentMethods.length > 0 ? (
-                <fieldset className="mt-5 space-y-2">
-                  <legend className="mb-2 text-xs font-semibold text-white/55">
-                    Payment method
-                  </legend>
-                  {paymentMethods.map((method) => (
-                    <label
-                      key={method}
-                      className={`flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-3 text-sm transition ${
-                        paymentMethod === method
-                          ? "border-blue-300/30 bg-blue-500/[0.12] text-white"
-                          : "border-white/[0.08] bg-black/15 text-white/55 hover:border-white/15"
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="payment_method"
-                        value={method}
-                        checked={paymentMethod === method}
-                        onChange={() => setPaymentMethod(method)}
-                        className="accent-blue-500"
-                      />
-                      <span className="capitalize">
-                        {method === "tikkie"
-                          ? "Tikkie (manual approval)"
-                          : method === "bitcoin"
-                            ? "Bitcoin (BTC)"
-                            : method === "litecoin"
-                              ? "Litecoin (LTC)"
-                              : "Card / wallet via Paddle"}
-                      </span>
-                    </label>
-                  ))}
-                </fieldset>
-              ) : null}
               <p className="mt-3 text-xs leading-5 text-white/35">
                 Final pricing and availability are checked again by the server before payment.
                 Taxes, if applicable, are calculated by the payment provider.
               </p>
+              
               <button
                 type="button"
                 onClick={startCheckout}
-                disabled={checkingOut}
-                className="mt-6 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-bold text-white shadow-[0_12px_32px_rgba(37,99,235,0.25)] transition hover:bg-blue-500 disabled:opacity-50"
+                className="mt-6 inline-flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3.5 text-sm font-bold text-white shadow-[0_12px_32px_rgba(37,99,235,0.25)] transition hover:bg-blue-500"
               >
                 {checkingOut ? (
                   <LoaderCircle className="h-4 w-4 animate-spin text-white" />
