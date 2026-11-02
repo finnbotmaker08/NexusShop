@@ -1,6 +1,6 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import Image from "next/image";
-import { ArrowRight, CircleAlert, ShieldCheck } from "lucide-react";
+import { ArrowRight, ShieldCheck } from "lucide-react";
 import { PaddlePurchaseButton } from "@/components/paddle-purchase-button";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
@@ -20,24 +20,8 @@ export default async function CheckoutPage({
   const supabase = await createSupabaseServerClient();
   const {
     data: { user },
-    error: authError,
   } = await supabase.auth.getUser();
 
-  if (authError && authError.name !== "AuthSessionMissingError") {
-    console.error("Could not load customer session for checkout:", authError.message);
-  }
-
-  const paddleEnvironment = process.env.PADDLE_ENVIRONMENT ?? "sandbox";
-  const checkoutConfigured =
-    Boolean(
-      process.env.PADDLE_CHECKOUT_ENABLED === "true" &&
-      process.env.PADDLE_API_KEY &&
-      process.env.PADDLE_WEBHOOK_SECRET &&
-      process.env.SUPABASE_SERVICE_ROLE_KEY &&
-        process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN &&
-        summary?.paddle_price_id,
-    ) &&
-    (paddleEnvironment === "sandbox" || paddleEnvironment === "production");
   const checkoutSignInUrl = summary
     ? `/account/login?returnTo=${encodeURIComponent(
         `/checkout?product=${summary.slug ?? summary.id}`,
@@ -70,9 +54,11 @@ export default async function CheckoutPage({
             </div>
           ) : null}
 
-          {summary && checkoutConfigured ? (
+          {summary ? (
             user ? (
-              <PaddlePurchaseButton productSlug={summary.slug ?? String(summary.id)} />
+              <div className="mt-7">
+                <PaddlePurchaseButton productSlug={summary.slug ?? String(summary.id)} />
+              </div>
             ) : (
               <Link
                 href={checkoutSignInUrl}
@@ -83,21 +69,10 @@ export default async function CheckoutPage({
             )
           ) : (
             <div className="mt-8 rounded-2xl border border-amber-200/10 bg-amber-100/[0.035] p-5">
-              <div className="flex items-start gap-3">
-                <CircleAlert className="mt-0.5 h-5 w-5 shrink-0 text-amber-100/70" />
-                <div>
-                  <p className="font-semibold text-white/85">
-                    {summary
-                      ? "Secure checkout is being set up"
-                      : "No product selected"}
-                  </p>
-                  <p className="mt-1 text-sm leading-6 text-white/45">
-                    {summary
-                      ? "No payment will be taken until the store owner connects an approved Paddle price and securely configures the payment provider."
-                      : "Choose a product from the catalog to see its details here."}
-                  </p>
-                </div>
-              </div>
+              <p className="font-semibold text-white/85">No product selected</p>
+              <p className="mt-1 text-sm leading-6 text-white/45">
+                Choose a product from the catalog to see its details here.
+              </p>
             </div>
           )}
 
