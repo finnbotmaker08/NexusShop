@@ -70,7 +70,6 @@ export async function saveProduct(data: FormData) {
   const salePrice = salePriceValue === "" ? null : Number(salePriceValue);
   const stock = stockValue === "" ? null : Number.parseInt(stockValue, 10);
 
-  // Correcte validatie voor optionele URL's (leeg is toegestaan, anders moet het geldig zijn)
   const isValidOptionalUrl = (url: string) => url === "" || isValidExternalUrl(url);
 
   if (
@@ -83,10 +82,9 @@ export async function saveProduct(data: FormData) {
     (stock !== null && (!/^\d+$/.test(stockValue) || !Number.isSafeInteger(stock) || stock < 0)) ||
     !["stock", "manual", "link"].includes(deliveryType) ||
     !isValidOptionalUrl(imageUrl) ||
-    !isValidOptionalUrl(externalUrl) ||
-    (paddlePriceId !== "" && !/^pri_[a-z0-9]+$/.test(paddlePriceId))
+    !isValidOptionalUrl(externalUrl)
   ) {
-    redirect(`/admin?error=product#products`);
+    redirect(`/admin?error=${encodeURIComponent("Validation check failed: check fields")}`);
   }
 
   const values = {
@@ -112,7 +110,7 @@ export async function saveProduct(data: FormData) {
 
   if (result.error) {
     console.error("Could not save product:", result.error.message);
-    redirect(`/admin?error=product#products`);
+    redirect(`/admin?error=${encodeURIComponent(result.error.message)}#products`);
   }
 
   refreshStorefront();
@@ -133,7 +131,7 @@ export async function deleteProduct(data: FormData) {
 
   if (keyError) {
     console.error("Could not check product inventory before deletion:", keyError.message);
-    redirect("/admin?error=product#products");
+    redirect(`/admin?error=${encodeURIComponent(keyError.message)}#products`);
   }
   if ((count ?? 0) > 0) {
     redirect("/admin?error=product-has-stock#products");
@@ -142,7 +140,7 @@ export async function deleteProduct(data: FormData) {
   const { error } = await supabase.from("products").delete().eq("id", id);
   if (error) {
     console.error("Could not delete product:", error.message);
-    redirect("/admin?error=product-in-orders#products");
+    redirect(`/admin?error=${encodeURIComponent(error.message)}#products`);
   }
 
   refreshStorefront();
@@ -165,7 +163,7 @@ export async function updateProductStatus(data: FormData) {
 
   if (error) {
     console.error("Could not update product status:", error.message);
-    redirect("/admin?error=product#products");
+    redirect(`/admin?error=${encodeURIComponent(error.message)}#products`);
   }
 
   refreshStorefront();
@@ -191,7 +189,7 @@ export async function saveCategory(data: FormData) {
 
   if (result.error) {
     console.error("Could not save category:", result.error.message);
-    redirect("/admin?error=category#categories");
+    redirect(`/admin?error=${encodeURIComponent(result.error.message)}#categories`);
   }
 
   refreshStorefront();
@@ -230,7 +228,7 @@ export async function saveStoreSettings(data: FormData) {
 
   if (error) {
     console.error("Could not save store settings:", error.message);
-    redirect("/admin?error=settings#settings");
+    redirect(`/admin?error=${encodeURIComponent(error.message)}#settings`);
   }
 
   refreshStorefront();
@@ -333,7 +331,7 @@ export async function savePaymentSettings(data: FormData) {
 
   if (error) {
     console.error("Could not save payment settings:", error.message);
-    redirect("/admin?error=payments#payments");
+    redirect(`/admin?error=${encodeURIComponent(error.message)}#payments`);
   }
 
   revalidatePath("/admin");
@@ -353,7 +351,7 @@ export async function approveStorePayment(data: FormData) {
   });
   if (error || typeof status !== "string") {
     if (error) console.error("Could not approve customer payment:", error.message);
-    redirect("/admin?error=payment#payments");
+    redirect(`/admin?error=${encodeURIComponent(error?.message ?? "Failed to approve payment")}#payments`);
   }
 
   const { data: payment, error: paymentError } = await supabase
@@ -427,7 +425,7 @@ export async function rejectStorePayment(data: FormData) {
   });
   if (error || rejected !== true) {
     if (error) console.error("Could not reject customer payment:", error.message);
-    redirect("/admin?error=payment#payments");
+    redirect(`/admin?error=${encodeURIComponent(error?.message ?? "Could not reject payment")}#payments`);
   }
 
   const { data: payment, error: paymentError } = await supabase
@@ -490,7 +488,7 @@ export async function saveDiscordWebhook(data: FormData) {
 
   if (error) {
     console.error("Could not save Discord webhook:", error.message);
-    redirect("/admin?error=webhook#discord");
+    redirect(`/admin?error=${encodeURIComponent(error.message)}#discord`);
   }
 
   revalidatePath("/admin");
@@ -506,7 +504,7 @@ export async function clearDiscordWebhook() {
 
   if (error) {
     console.error("Could not clear Discord webhook:", error.message);
-    redirect("/admin?error=webhook#discord");
+    redirect(`/admin?error=${encodeURIComponent(error.message)}#discord`);
   }
 
   revalidatePath("/admin");
@@ -523,7 +521,7 @@ export async function testDiscordWebhook() {
 
   if (error || !data) {
     if (error) console.error("Could not load Discord webhook:", error.message);
-    redirect("/admin?error=webhook#discord");
+    redirect(`/admin?error=${encodeURIComponent(error?.message ?? "Webhook not found")}#discord`);
   }
 
   if (!isValidDiscordWebhook(data.webhook_url)) {
@@ -594,7 +592,7 @@ export async function addProductKeys(data: FormData) {
 
   if (error) {
     console.error("Could not add product keys:", error.message);
-    redirect("/admin?error=keys#keys");
+    redirect(`/admin?error=${encodeURIComponent(error.message)}#keys`);
   }
 
   revalidatePath("/admin");
@@ -619,7 +617,7 @@ export async function deleteProductKey(data: FormData) {
 
   if (error || !deletedKey) {
     if (error) console.error("Could not delete product key:", error.message);
-    redirect("/admin?error=keys#keys");
+    redirect(`/admin?error=${encodeURIComponent(error?.message ?? "Key could not be deleted")}#keys`);
   }
 
   revalidatePath("/admin");
@@ -640,7 +638,7 @@ export async function retryPaidOrderFulfillment(data: FormData) {
 
   if (error) {
     console.error("Could not retry order fulfillment:", error.message);
-    redirect("/admin?error=order#orders");
+    redirect(`/admin?error=${encodeURIComponent(error.message)}#orders`);
   }
 
   revalidatePath("/admin");
@@ -677,7 +675,7 @@ export async function completeManualStoreOrder(data: FormData) {
     if (error) {
       console.error("Could not complete manual delivery:", error.message);
     }
-    redirect("/admin?error=manual-delivery#orders");
+    redirect(`/admin?error=${encodeURIComponent(error?.message ?? "Manual delivery failed")}#orders`);
   }
 
   const { data: order, error: orderError } = await supabase
